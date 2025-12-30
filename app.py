@@ -394,25 +394,65 @@ if df_inv is not None and not df_inv.empty:
                 if ic in df_view.columns:
                     df_view[ic] = df_view[ic].astype(int)
 
-            # Apply formatting using Pandas Styler to ensure commas are shown
-            # This is the most reliable way to get thousand separators
-            styler_view = df_view.style.format({
-                "평가금액": "{:,.0f}",
-                "총평가손익": "{:,.0f}",
-                "자산비중": "{:.0f}%" 
-            })
+            # Determine View Mode (Mobile Card vs Table)
+            mobile_view = st.toggle("📱 모바일 카드 뷰 (카드형 보기)", value=True)
 
-            # Display with Styler
-            st.dataframe(
-                styler_view,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "평가금액": st.column_config.NumberColumn(label="평가금액"),
-                    "총평가손익": st.column_config.NumberColumn(label="총평가손익"),
-                    "자산비중": st.column_config.NumberColumn(label="자산비중")
-                }
-            )
+            if mobile_view:
+                for index, row in df_view.iterrows():
+                    # Format values
+                    fmt_amt = "{:,.0f}".format(row['평가금액'])
+                    fmt_profit = "{:+,.0f}".format(row['총평가손익'])
+                    fmt_weight = "{:.0f}%".format(row['자산비중']) if '자산비중' in row else "-"
+                    
+                    # Profit Color
+                    profit_color = "#ff4b4b" if row['총평가손익'] < 0 else "#4CAF50" # Red for loss, Green for profit
+                    
+                    card_html = f"""
+                    <div style="
+                        background: linear-gradient(135deg, #2b2b2b 0%, #1a1a1a 100%);
+                        border: 1px solid rgba(255, 255, 255, 0.1);
+                        border-radius: 15px;
+                        padding: 20px;
+                        margin-bottom: 15px;
+                        box-shadow: 0 10px 20px rgba(0,0,0,0.15);
+                        transition: transform 0.2s;
+                    ">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
+                            <span style="font-size: 1.15rem; font-weight: 700; color: #F5F5F7;">{row['종목']}</span>
+                            <span style="font-size: 0.8rem; color: #D1D1D6; background: rgba(255,255,255,0.1); padding: 4px 10px; border-radius: 12px; font-weight: 500;">{row['포트폴리오 구분']}</span>
+                        </div>
+                        <div style="font-size: 1.6rem; font-weight: 800; color: #FFFFFF; margin-bottom: 10px; letter-spacing: -0.5px;">
+                            ₩{fmt_amt}
+                        </div>
+                        <hr style="border: 0; height: 1px; background-image: linear-gradient(to right, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0)); margin-bottom: 10px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.95rem;">
+                            <span style="color: {profit_color}; font-weight: 700;">{fmt_profit}</span>
+                            <span style="color: #8E8E93; font-weight: 500;">자산 비중 {fmt_weight}</span>
+                        </div>
+                    </div>
+                    """
+                    st.markdown(card_html, unsafe_allow_html=True)
+
+            else:
+                # Apply formatting using Pandas Styler to ensure commas are shown
+                # This is the most reliable way to get thousand separators
+                styler_view = df_view.style.format({
+                    "평가금액": "{:,.0f}",
+                    "총평가손익": "{:,.0f}",
+                    "자산비중": "{:.0f}%" 
+                })
+
+                # Display with Styler
+                st.dataframe(
+                    styler_view,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "평가금액": st.column_config.NumberColumn(label="평가금액"),
+                        "총평가손익": st.column_config.NumberColumn(label="총평가손익"),
+                        "자산비중": st.column_config.NumberColumn(label="자산비중")
+                    }
+                )
         else:
             st.warning("요청하신 컬럼을 찾을 수 없습니다. 원본 데이터를 표시합니다.")
             st.dataframe(df_inv)
