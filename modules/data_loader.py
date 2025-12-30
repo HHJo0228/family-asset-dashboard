@@ -40,6 +40,54 @@ def load_data():
         st.error(f"Error loading data: {e}. Check sheet names and permissions.")
         return None
 
+def get_transaction_options():
+    """
+    Reads '00_거래일지' to get unique values for dropdowns.
+    Returns a dict with lists for 'owners', 'accounts', 'tickers', 'types', 'currencies'.
+    """
+    try:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        df = conn.read(worksheet="00_거래일지", ttl="0") # No cache to get latest
+        
+        if df is None or df.empty:
+            return {}
+
+        return {
+            "owners": sorted(df['소유자'].dropna().unique().tolist()) if '소유자' in df.columns else [],
+            "accounts": sorted(df['계좌'].dropna().unique().tolist()) if '계좌' in df.columns else [],
+            "tickers": sorted(df['종목'].dropna().unique().tolist()) if '종목' in df.columns else [],
+            "types": sorted(df['거래구분'].dropna().unique().tolist()) if '거래구분' in df.columns else [],
+            "currencies": sorted(df['통화'].dropna().unique().tolist()) if '통화' in df.columns else [],
+        }
+    except Exception as e:
+        st.error(f"Error fetching options: {e}")
+        return {}
+
+def add_transaction_log(new_row_data):
+    """
+    Appends a new row to '00_거래일지'.
+    new_row_data: dict containing keys matching columns.
+    """
+    try:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        df = conn.read(worksheet="00_거래일지", ttl="0")
+        
+        # Convert dict to DataFrame
+        new_df = pd.DataFrame([new_row_data])
+        
+        # Append
+        updated_df = pd.concat([df, new_df], ignore_index=True)
+        
+        # Update Sheet
+        conn.update(worksheet="00_거래일지", data=updated_df)
+        
+        # Clear cache to reflect changes immediately
+        st.cache_data.clear()
+        return True
+    except Exception as e:
+        st.error(f"Error saving transaction: {e}")
+        return False
+
 def _clean_history_data(df):
     """
     Cleans the history dataframe: converts dates, ensures numerics.
