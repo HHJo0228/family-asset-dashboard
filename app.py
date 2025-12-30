@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from datetime import datetime
 from modules import data_loader
 
 # --- Page Config ---
@@ -86,6 +87,70 @@ df_beta = data_map['beta_plan']
 # --- Sidebar ---
 st.sidebar.header("자산 모니터링")
 st.sidebar.caption("최근 업데이트: " + (df_hist['날짜'].iloc[-1].strftime('%Y-%m-%d') if not df_hist.empty else "N/A"))
+
+# --- Transaction Input Form (New) ---
+with st.sidebar.expander("✍️ 거래일지 입력 (Input)", expanded=False):
+    st.caption("구글 시트 '00_거래일지'에 추가됩니다.")
+    
+    # Fetch options dynamically
+    options = data_loader.get_transaction_options()
+    
+    with st.form("transaction_form", clear_on_submit=True):
+        # 1. Date
+        txn_date = st.date_input("날짜 (Date)", datetime.today())
+        
+        # 2. Enums (Dropdowns)
+        # Handle empty lists gracefully
+        owners = options.get("owners", [])
+        accounts = options.get("accounts", [])
+        tickers = options.get("tickers", [])
+        types = options.get("types", [])
+        currencies = options.get("currencies", [])
+
+        c1, c2 = st.columns(2)
+        with c1:
+            sel_owner = st.selectbox("소유자", owners if owners else ["직접입력"])
+        with c2:
+            sel_account = st.selectbox("계좌", accounts if accounts else ["직접입력"])
+
+        # Ticker (Allow custom input if needed, but selectbox for now as requested)
+        sel_ticker = st.selectbox("종목", tickers if tickers else ["직접입력"])
+        
+        c3, c4 = st.columns(2)
+        with c3:
+            sel_type = st.selectbox("거래구분", types if types else ["매수", "매도", "배당금"])
+        with c4:
+            sel_currency = st.selectbox("통화", currencies if currencies else ["$", "₩"])
+        
+        # 3. Numeric Inputs
+        txn_amount = st.number_input("거래금액 (Amount)", min_value=0.0, step=1.0, format="%.0f")
+        txn_qty = st.number_input("수량 (Qty)", min_value=0.0, step=0.0001, format="%.4f")
+        
+        # 4. Note
+        txn_note = st.text_input("비고 (Note)")
+        
+        # Submit
+        submitted = st.form_submit_button("💾 저장 (Save)")
+        
+        if submitted:
+            # Prepare row data
+            new_row = {
+                "날짜": txn_date.strftime("%Y-%m-%d"),
+                "소유자": sel_owner,
+                "계좌": sel_account,
+                "종목": sel_ticker,
+                "거래구분": sel_type,
+                "통화": sel_currency,
+                "거래금액": txn_amount,
+                "수량": txn_qty,
+                "비고": txn_note
+            }
+            
+            if data_loader.add_transaction_log(new_row):
+                st.success("저장되었습니다! (Saved)")
+                st.rerun() # Refresh to show updated cache if needed
+            else:
+                st.error("저장 실패 (Failed)")
 
 # --- 1. Top Section: Scoreboard (CAGR & DoD) ---
 st.subheader("🚀 포트폴리오 성과")
