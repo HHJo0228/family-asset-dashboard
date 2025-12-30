@@ -394,15 +394,23 @@ if df_inv is not None and not df_inv.empty:
                 if ic in df_view.columns:
                     df_view[ic] = df_view[ic].astype(int)
 
-            # Display with Styler/Column Config
+            # Apply formatting using Pandas Styler to ensure commas are shown
+            # This is the most reliable way to get thousand separators
+            styler_view = df_view.style.format({
+                "평가금액": "{:,.0f}",
+                "총평가손익": "{:,.0f}",
+                "자산비중": "{:.0f}%" 
+            })
+
+            # Display with Styler
             st.dataframe(
-                df_view,
+                styler_view,
                 use_container_width=True,
                 hide_index=True,
                 column_config={
-                    "평가금액": st.column_config.NumberColumn(), # Default adds commas
-                    "총평가손익": st.column_config.NumberColumn(), # Default adds commas
-                    "자산비중": st.column_config.NumberColumn(format="%d%%") # Integer Percentage
+                    "평가금액": st.column_config.NumberColumn(label="평가금액"),
+                    "총평가손익": st.column_config.NumberColumn(label="총평가손익"),
+                    "자산비중": st.column_config.NumberColumn(label="자산비중")
                 }
             )
         else:
