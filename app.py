@@ -440,11 +440,26 @@ if df_inv is not None and not df_inv.empty:
             if sort_cols:
                 df_view = df_view.sort_values(by=sort_cols, ascending=ascending_vals)
 
-            # 4. Filtering by Portfolio
+            # 4. Filtering (Portfolio & Ticker)
+            # Capture available options from the full df_view (before any filtering) to ensure all options are visible initially
+            all_ports = list(df_view['포트폴리오 구분'].unique()) if '포트폴리오 구분' in df_view.columns else []
+            all_tickers = list(df_view['종목'].unique()) if '종목' in df_view.columns else []
+            
+            f1, f2 = st.columns(2)
+
+            # Draw Filters
+            with f1:
+                 # Portfolio Filter
+                 sel_port = st.multiselect("포트폴리오 필터", all_ports, default=all_ports, key="multi_port")
+            with f2:
+                 # Ticker Filter
+                 sel_ticker = st.multiselect("종목 필터", all_tickers, default=all_tickers, key="multi_ticker")
+            
+            # Apply Filters
             if '포트폴리오 구분' in df_view.columns:
-                ports = list(df_view['포트폴리오 구분'].unique())
-                sel_port = st.multiselect("포트폴리오 필터", ports, default=ports)
                 df_view = df_view[df_view['포트폴리오 구분'].isin(sel_port)]
+            if '종목' in df_view.columns:
+                df_view = df_view[df_view['종목'].isin(sel_ticker)]
 
             # Numeric conversion handled before grouping
             
