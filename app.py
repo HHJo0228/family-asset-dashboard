@@ -14,526 +14,1167 @@ st.set_page_config(
 # --- Password Protection ---
 def check_password():
     """Returns `True` if the user had the correct password."""
-
-    def password_entered():
-        """Checks whether a password entered by the user is correct."""
-        if st.session_state["password"] == st.secrets["general"]["password"]:
-            st.session_state["password_correct"] = True
-            del st.session_state["password"]  # don't store password
-        else:
-            st.session_state["password_correct"] = False
-
-    if "password_correct" not in st.session_state:
-        # First run, show input for password.
-        st.text_input(
-            "비밀번호를 입력하세요 (Password)", type="password", on_change=password_entered, key="password"
-        )
-        return False
-    elif not st.session_state["password_correct"]:
-        # Password not correct, show input + error.
-        st.text_input(
-            "비밀번호를 입력하세요 (Password)", type="password", on_change=password_entered, key="password"
-        )
-        st.error("😕 비밀번호가 틀렸습니다.")
-        return False
-    else:
-        # Password correct.
+    
+    # Check if already verified
+    if st.session_state.get("password_correct", False):
         return True
+
+    # Custom CSS for Login
+    st.markdown("""
+        <style>
+            /* Minimalist Login Card */
+            [data-testid="stForm"] {
+                padding: 30px;
+                border-radius: 16px;
+                background-color: transparent;
+                border: 1px solid rgba(128, 128, 128, 0.2);
+                box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+            }
+            .stButton > button {
+                width: 100%;
+                border-radius: 8px;
+                font-weight: 500;
+                margin-top: 15px;
+                height: 45px; /* Ensure button has good touch target */
+            }
+            /* Input field styling adjustment to prevent shrinking */
+            .stTextInput input {
+                min-height: 40px;
+            }
+            h1 { text-align: center; font-size: 1.8rem !important; margin-bottom: 20px; }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # Centered Layout using Columns (Adjusted for better width)
+    # Using spacer columns to center the login form comfortably
+    col1, col2, col3 = st.columns([1, 1, 1])
+    
+    with col2:
+        st.markdown("<br><br><br>", unsafe_allow_html=True) # Spacer
+        st.title("Login")
+        
+        with st.form("login_form"):
+            password = st.text_input("Password", type="password")
+            submitted = st.form_submit_button("Enter")
+            
+            if submitted:
+                if password == st.secrets["general"]["password"]:
+                    st.session_state["password_correct"] = True
+                    st.rerun()
+                else:
+                    st.session_state["password_correct"] = False
+                    st.error("Incorrect password")
+    
+    return False
 
 if not check_password():
     st.stop()
 
 # --- Styling ---
+# --- Styling ---
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Nanum+Gothic:wght@400;700&display=swap');
-
+    /* Global Styling - Simple & Clean */
     html, body, [class*="css"] {
-        font-family: 'Nanum Gothic', sans-serif !important;
+        font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+# --- Load Data ---
+data = data_loader.load_data()
+# --- Load Data ---
+data = data_loader.load_data()
+
+if data:
+    df_hist = data["history"]
+    df_cagr = data["cagr"]
+    df_inv = data["inventory"]
+    df_beta = data["beta_plan"]
+else:
+    st.error("Failed to load data")
+    st.stop()
+
+# --- Constants & Configuration ---
+# Updated Color Palette (Grouped Logic)
+# Shoho Group (Blue/Cool): Light Blue, Slate/Cornflower
+# Jo Group (Warm/Orange): Peach, Pale Yellow
+# Park Group (Distinct): Coral Red
+PORT_COLORS = {
+    '쇼호 α': "#AECBEB", # Light Blue
+    '쇼호 β': "#6495ED", # Cornflower Blue (Similar but distinct)
+    '조연재': "#F99D65", # Peach Orange
+    '조이재': "#FBD7AC", # Pale Yellow
+    '박행자': "#EB5E55", # Coral Red
+}
+
+# Revert to Korean Names
+portfolios = ['쇼호 α', '쇼호 β', '조연재', '조이재', '박행자']
+
+# --- Sidebar Navigation ---
+st.sidebar.header("Menu")
+
+# Get Options (Owners, etc.)
+txn_options = data_loader.get_transaction_options()
+owners_list = txn_options.get('owners', [])
+
+# Custom CSS...
+st.markdown("""
+<style>
+    /* ... (CSS Content same as before) ... */
+    div[role="radiogroup"] > label > div:first-child {
+        display: none !important;
     }
     
-    .metric-container {
-        border: 1px solid #333;
-        border-radius: 8px;
-        padding: 10px;
-        background-color: #0e1117;
+    [data-testid="stSidebar"] div[role="radiogroup"] > label {
+        padding: 12px 20px;
+        margin-bottom: 8px;
+        border-radius: 12px;
+        transition: all 0.3s ease;
+        cursor: pointer;
+        display: block; 
+        border: 1px solid transparent;
+        color: #E0E0E0; 
     }
-    .big-font { font-size: 1.2rem; font-weight: bold; }
-
-    /* Mobile Responsiveness Tweaks */
-    @media (max-width: 768px) {
-        /* Force columns to stack vertically on small screens */
-        div[data-testid="column"] {
-            width: 100% !important;
-            flex: 1 1 auto !important;
-            min-width: 100% !important;
-        }
+    [data-testid="stSidebar"] div[role="radiogroup"] > label:hover {
+        background-color: rgba(174, 203, 235, 0.15); 
+        color: #AECBEB;
+        border: 1px solid rgba(174, 203, 235, 0.3);
+    }
+    
+    .stMain div[role="radiogroup"] {
+        display: flex;
+        gap: 10px;
+        flex-direction: row;
+    }
+    .stMain div[role="radiogroup"] > label {
+        background-color: rgba(255, 255, 255, 0.05);
+        padding: 5px 15px;
+        border-radius: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        cursor: pointer;
+        transition: 0.2s;
+    }
+    .stMain div[role="radiogroup"] > label:hover {
+        background-color: rgba(255, 255, 255, 0.1);
+        border-color: #AECBEB;
+    }
+    
+    section[data-testid="stSidebar"] {
+        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# --- Load Data ---
-data_map = data_loader.load_data()
+page = st.sidebar.radio(
+    "Select a page:",
+    [
+        "Asset Trend", 
+        "Portfolio Scorecard", 
+        "Asset Details", 
+        "Transaction Log", 
+        "Beta Rebalancing",
+        "Historical Analysis"
+    ],
+    label_visibility="collapsed" 
+)
 
-if not data_map:
-    st.error("Failed to load data. Please check connections.")
-    st.stop()
+st.sidebar.markdown("---")
 
-df_hist = data_map['history']
-df_cagr = data_map['cagr']
-df_inv = data_map['inventory']
-df_beta = data_map['beta_plan']
+# Global Filters (Apply to relevant pages like Asset Details)
+selected_owners = []
+if page == "Asset Details" and owners_list:
+    st.sidebar.subheader("Filters")
+    selected_owners = st.sidebar.multiselect("Select Owners", owners_list)
 
-# --- Sidebar ---
-st.sidebar.header("자산 모니터링")
-st.sidebar.caption("최근 업데이트: " + (df_hist['날짜'].iloc[-1].strftime('%Y-%m-%d') if not df_hist.empty else "N/A"))
+st.sidebar.markdown("---")
+st.sidebar.caption("Last Update: " + (df_hist['날짜'].iloc[-1].strftime('%Y-%m-%d') if not df_hist.empty else "N/A"))
 
-# --- Transaction Input Form (New) ---
-with st.sidebar.expander("✍️ 거래일지 입력 (Input)", expanded=False):
-    st.caption("구글 시트 '00_거래일지'에 추가됩니다.")
-    
-    # Fetch options dynamically
-    options = data_loader.get_transaction_options()
-    
-    with st.form("transaction_form", clear_on_submit=True):
-        # 1. Date
-        txn_date = st.date_input("날짜 (Date)", datetime.today())
-        
-        # 2. Enums (Dropdowns)
-        # Handle empty lists gracefully
-        owners = options.get("owners", [])
-        accounts = options.get("accounts", [])
-        tickers = options.get("tickers", [])
-        types = options.get("types", [])
-        currencies = options.get("currencies", [])
+if st.sidebar.button("Clear Cache"):
+    st.cache_data.clear()
+    st.rerun()
 
-        c1, c2 = st.columns(2)
-        with c1:
-            sel_owner = st.selectbox("소유자", owners if owners else ["직접입력"])
-        with c2:
-            sel_account = st.selectbox("계좌", accounts if accounts else ["직접입력"])
+# --- Page 1: Asset & Index Trend ---
+if page == "Asset Trend":
+    st.header("Asset & Index Trend")
 
-        # Ticker (Allow custom input if needed, but selectbox for now as requested)
-        sel_ticker = st.selectbox("종목", tickers if tickers else ["직접입력"])
+    # Frequency Toggle
+    freq_option = st.radio("Frequency", ["Daily", "Weekly", "Monthly"], horizontal=True)
+
+    # Resample Logic
+    df_chart = df_hist.copy()
+    if not df_chart.empty and '날짜' in df_chart.columns:
+        df_chart = df_chart.set_index('날짜')
         
-        c3, c4 = st.columns(2)
-        with c3:
-            sel_type = st.selectbox("거래구분", types if types else ["매수", "매도", "배당금"])
-        with c4:
-            sel_currency = st.selectbox("통화", currencies if currencies else ["$", "₩"])
+        # Preserve the very first data point (Baseline)
+        first_row = df_chart.iloc[[0]].copy()
         
-        # 3. Numeric Inputs
-        txn_amount = st.number_input("거래금액 (Amount)", min_value=0.0, step=1.0, format="%.0f")
-        txn_qty = st.number_input("수량 (Qty)", min_value=0.0, step=0.0001, format="%.4f")
-        
-        # 4. Note
-        txn_note = st.text_input("비고 (Note)")
-        
-        # Submit
-        submitted = st.form_submit_button("💾 저장 (Save)")
-        
-        if submitted:
-            # Prepare row data
-            new_row = {
-                "날짜": txn_date.strftime("%Y-%m-%d"),
-                "소유자": sel_owner,
-                "계좌": sel_account,
-                "종목": sel_ticker,
-                "거래구분": sel_type,
-                "통화": sel_currency,
-                "거래금액": txn_amount,
-                "수량": txn_qty,
-                "비고": txn_note
-            }
-            
-            if data_loader.add_transaction_log(new_row):
-                st.success("저장되었습니다! (Saved)")
-                st.rerun() # Refresh to show updated cache if needed
+        if freq_option == "Weekly":
+            df_resampled = df_chart.resample('W').last().dropna()
+            # Combine first row if it's not effectively the same as the first resampled point
+            if not df_resampled.empty and first_row.index[0] != df_resampled.index[0]:
+                df_chart = pd.concat([first_row, df_resampled]).drop_duplicates().sort_index()
             else:
-                st.error("저장 실패 (Failed)")
+                 df_chart = df_resampled
+                 
+        elif freq_option == "Monthly":
+            df_resampled = df_chart.resample('ME').last().dropna()
+            # Combine first row
+            if not df_resampled.empty and first_row.index[0] != df_resampled.index[0]:
+                df_chart = pd.concat([first_row, df_resampled]).drop_duplicates().sort_index()
+            else:
+                 df_chart = df_resampled
+        
+        df_chart = df_chart.reset_index()
 
-# --- 1. Top Section: Scoreboard (CAGR & DoD) ---
-st.subheader("🚀 포트폴리오 성과")
+    tab_asset, tab_idx = st.tabs(["Asset Trend", "Index (100)"])
 
-# Calculate DoD
-dod_data = data_loader.calculate_dod(df_hist)
+    # Common Rangebreaks (Hide Weekends only for Daily)
+    if freq_option == "Daily":
+        weekend_breaks = [dict(bounds=["sat", "mon"])]
+    else:
+        weekend_breaks = []
 
-# Identify portfolios common to both or just use known list
-# Hardcoded mostly to match user request "5개 가족 포트폴리오"
-# Expected headers in History: 쇼호 α, 쇼호 β, 조연재, 조이재, 박행자
-portfolios = ['쇼호 α', '쇼호 β', '조연재', '조이재', '박행자']
+    # Fix for Plotly TypeError: Convert to epoch milliseconds
+    baseline_ts = pd.Timestamp("2025-09-22")
+    baseline_date = baseline_ts.value // 10**6 
 
-cols = st.columns(len(portfolios))
-for i, port in enumerate(portfolios):
-    with cols[i]:
-        # Get Current Value & DoD
-        if port in dod_data:
-            val = dod_data[port]['value']
-            diff = dod_data[port]['diff']
-            pct = dod_data[port]['pct']
+    with tab_asset:
+        if not df_chart.empty:
+            fig_asset = go.Figure()
+            for i, port in enumerate(portfolios):
+                if port in df_chart.columns:
+                    fig_asset.add_trace(go.Scatter(
+                        x=df_chart['날짜'], 
+                        y=df_chart[port], 
+                        mode='lines', 
+                        name=port,
+                        line=dict(color=PORT_COLORS.get(port, "#FFFFFF"), width=3) # Apply Specific Color
+                    ))
             
-            # Get CAGR (Look up in df_cagr)
-            # Robust lookup for CAGR
-            cagr_val = 0.0
+            fig_asset.add_vline(x=baseline_date, line_width=1, line_dash="dash", line_color="gray", annotation_text="Base: 2025.09.22")
+            fig_asset.update_layout(
+                template="plotly_dark", 
+                title="Portfolio Asset Trend",
+                xaxis_title="Date",
+                yaxis_title="Value (KRW)",
+                hovermode="x unified",
+                xaxis=dict(rangebreaks=weekend_breaks),
+                plot_bgcolor='rgba(0,0,0,0)', # Transparent background
+                paper_bgcolor='rgba(0,0,0,0)'
+            )
+            st.plotly_chart(fig_asset, use_container_width=True)
+
+    with tab_idx:
+        if not df_chart.empty:
+            fig_idx = go.Figure()
+            for i, port in enumerate(portfolios):
+                idx_col = f"{port}_idx"
+                if idx_col in df_chart.columns:
+                    fig_idx.add_trace(go.Scatter(
+                        x=df_chart['날짜'], 
+                        y=df_chart[idx_col], 
+                        mode='lines', 
+                        name=port,
+                        line=dict(color=PORT_COLORS.get(port, "#FFFFFF"), width=3) # Apply Specific Color
+                    ))
             
-            # 1. Identify Key Columns
-            col_port = next((c for c in df_cagr.columns if 'Portfolio' in c or '포트폴리오' in c or '이름' in c or '구분' in c or '소유자' in c), None)
-            col_cagr = next((c for c in df_cagr.columns if 'CAGR' in c or '수익률' in c or '연환산' in c), None)
+            fig_idx.add_vline(x=baseline_date, line_width=1, line_dash="dash", line_color="gray", annotation_text="Start")
+            fig_idx.add_hline(y=100, line_width=1, line_color="white")
+            fig_idx.update_layout(
+                template="plotly_dark", 
+                title="Index Comparison (Base=100)",
+                xaxis_title="Date",
+                yaxis_title="Index",
+                hovermode="x unified",
+                xaxis=dict(rangebreaks=weekend_breaks),
+                plot_bgcolor='rgba(0,0,0,0)',
+                paper_bgcolor='rgba(0,0,0,0)'
+            )
+            st.plotly_chart(fig_idx, use_container_width=True)
+
+
+# --- Page 2: Portfolio Performance (DoD & CAGR) ---
+elif page == "Portfolio Scorecard":
+    st.header("Portfolio Scorecard")
+    
+    # Calculate DoD
+    dod_data = data_loader.calculate_dod(df_hist)
+    
+    # Standard Streamlit Layout for Scorecard
+    cols = st.columns(len(portfolios))
+    
+    for idx, port in enumerate(portfolios):
+        with cols[idx]:
+            # 1. Basic Value & DoD
+            val = 0
+            diff = 0
+            pct = 0
+            if port in dod_data:
+                val = dod_data[port]['value']
+                diff = dod_data[port]['diff']
+                pct = dod_data[port]['pct']
             
-            if col_port and col_cagr:
-                # 2. Try Exact Match
-                match = df_cagr[df_cagr[col_port] == port]
-                if match.empty:
-                    # 3. Try removing spaces (e.g. '쇼호 α' -> '쇼호α')
-                    port_nospace = port.replace(" ", "")
-                    # Create temporary series for comparison
-                    names_nospace = df_cagr[col_port].astype(str).str.replace(" ", "")
-                    match_idx = names_nospace[names_nospace == port_nospace].index
-                    if not match_idx.empty:
-                        match = df_cagr.loc[match_idx]
-                
-                if not match.empty:
-                    val_raw = match[col_cagr].iloc[0]
-                    # Ensure numeric
-                    if isinstance(val_raw, str):
-                         val_raw = float(val_raw.replace('%', '').replace(',', '')) / 100.0 if '%' in val_raw else float(val_raw)
-                    cagr_val = val_raw
+            # 2. Get CAGR
+            cagr_val = None
+            if df_cagr is not None:
+                col_port = next((c for c in df_cagr.columns if 'Portfolio' in c or '포트폴리오' in c or '이름' in c or '구분' in c or '소유자' in c), None)
+                col_cagr = next((c for c in df_cagr.columns if 'CAGR' in c or '수익률' in c or '연환산' in c), None)
+                if col_port and col_cagr:
+                    match = df_cagr[df_cagr[col_port] == port]
+                    if match.empty:
+                        port_nospace = port.replace(" ", "")
+                        names_nospace = df_cagr[col_port].astype(str).str.replace(" ", "")
+                        match_idx = names_nospace[names_nospace == port_nospace].index
+                        if not match_idx.empty:
+                            match = df_cagr.loc[match_idx]
+                    
+                    if not match.empty:
+                        val_raw = match[col_cagr].iloc[0]
+                        if isinstance(val_raw, str):
+                                val_raw = float(val_raw.replace('%', '').replace(',', '')) / 100.0 if '%' in val_raw else float(val_raw)
+                        cagr_val = val_raw
+
+            # 3. Get Total Return
+            total_return_pct = None
+            if not df_hist.empty:
+                try:
+                    port_idx = portfolios.index(port)
+                    target_col_idx = 7 + port_idx
+                    if target_col_idx < len(df_hist.columns):
+                        principal_val = df_hist.iloc[-1, target_col_idx]
+                        if isinstance(principal_val, str):
+                            principal_val = float(principal_val.replace(',', ''))
+                        if principal_val > 0:
+                            total_return_pct = (val - principal_val) / principal_val
+                except Exception:
+                    pass
             
+            # Display Metric
             st.metric(
                 label=port,
                 value=f"₩{val:,.0f}",
-                delta=f"{diff:,.0f} ({pct:+.2%})",
-                help=f"CAGR: {cagr_val:.2%}" # Show CAGR in tooltip or separate line
+                delta=f"{diff:,.0f} ({pct:+.1%})"
             )
-            st.caption(f"**CAGR**: `{cagr_val:.2%}`")
-
-st.markdown("---")
-
-# --- 2. Main Charts: Asset & Index Trend ---
-st.subheader("📈 자산 및 지수 추이")
-
-tab_asset, tab_idx = st.tabs(["💰 자산 추이", "📊 인덱스 추이 (Base: 2025.09.22)"])
-
-# Fix for Plotly TypeError: Convert to epoch milliseconds for robustness
-baseline_ts = pd.Timestamp("2025-09-22")
-baseline_date = baseline_ts.value // 10**6  # Convert ns to ms for Plotly date axis compatibility
-
-with tab_asset:
-    # Plot each portfolio value over time
-    if not df_hist.empty:
-        fig_asset = go.Figure()
-        for port in portfolios:
-            if port in df_hist.columns:
-                fig_asset.add_trace(go.Scatter(
-                    x=df_hist['날짜'], 
-                    y=df_hist[port], 
-                    mode='lines', 
-                    name=port
-                ))
-        
-        # Add VLine
-        fig_asset.add_vline(x=baseline_date, line_width=1, line_dash="dash", line_color="yellow", annotation_text="Base: 2025.09.22")
-        fig_asset.update_layout(
-            template="plotly_dark", 
-            title="포트폴리오 자산 추이",
-            xaxis_title="날짜",
-            yaxis_title="평가액 (원)",
-            hovermode="x unified"
-        )
-        st.plotly_chart(fig_asset, use_container_width=True)
-
-with tab_idx:
-    # Plot index columns (ending in _idx)
-    # Mapping port name to its idx col (e.g., 쇼호α -> 쇼호α_idx)
-    if not df_hist.empty:
-        fig_idx = go.Figure()
-        for port in portfolios:
-            idx_col = f"{port}_idx"
-            if idx_col in df_hist.columns:
-                fig_idx.add_trace(go.Scatter(
-                    x=df_hist['날짜'], 
-                    y=df_hist[idx_col], 
-                    mode='lines', 
-                    name=port
-                ))
-        
-        fig_idx.add_vline(x=baseline_date, line_width=1, line_dash="dash", line_color="yellow", annotation_text="Start")
-        fig_idx.add_hline(y=100, line_width=1, line_color="gray")
-        fig_idx.update_layout(
-            template="plotly_dark", 
-            title="기준 지수 성과 비교 (Base=100)",
-            xaxis_title="날짜",
-            yaxis_title="지수",
-            hovermode="x unified"
-        )
-        st.plotly_chart(fig_idx, use_container_width=True)
-
-# --- 3. Beta Portfolio Rebalancing Zone ---
-st.markdown("---")
-st.subheader("⚖️ 베타 포트폴리오 리밸런싱 (쇼호β)")
-
-if df_beta is not None and not df_beta.empty:
-    # Assume cols: 'Ticker', 'CurrentWeight', 'TargetWeight'
-    # Adapt to Korean headers if necessary
-    # Let's standardize in data_loader but here we check what we have.
+            
+            # Sub-metrics (CAGR / Total Return)
+            sub_info = []
+            if total_return_pct is not None:
+                sub_info.append(f"Total Return: {total_return_pct:+.1%}")
+            if cagr_val is not None:
+                sub_info.append(f"CAGR: {cagr_val:.1%}")
+            
+            if sub_info:
+                st.caption(" | ".join(sub_info))
     
-    # Check required columns
-    # We might need to map Korean headers to English for logic if not done in loader
-    # In loader, I added _clean_numeric_cols but didn't rename.
-    # Let's check keys.
+    st.divider()
+
+
+# --- Page 3: Asset Inventory ---
+elif page == "Asset Details":
+    st.header("Asset Inventory Details")
     
-    # For now, let's assume specific columns exist or fallback.
-    # User said: "베타포트폴리오': '쇼호β' 전용 목표 비중 및 현재 비중 데이터 포함."
+    # 1. Prepare Data
+    df_asset = data['inventory'].copy()
+    df_master = data['account_master'].copy()
     
-    # Let's try to interpret the DF columns dynamically
-    col_ticker = next((c for c in df_beta.columns if '종목' in c or 'Ticker' in c), None)
-    col_cur_w = next((c for c in df_beta.columns if '현재' in c or 'Current' in c), None)
-    col_tgt_w = next((c for c in df_beta.columns if '목표' in c or 'Target' in c), None)
-    col_owner = next((c for c in df_beta.columns if '소유자' in c or 'Owner' in c), None)
+    # Ensure numeric types
+    num_cols = ['매입금액', '평가금액', '총평가손익']
+    for col in num_cols:
+        if col in df_asset.columns:
+            df_asset[col] = pd.to_numeric(df_asset[col], errors='coerce').fillna(0)
+            
+    # 2. Use '포트폴리오 구분' directly (No Merge)
+    # User confirmed '포트폴리오 구분' exists in '자산종합' sheet.
     
-    if col_ticker and col_cur_w and col_tgt_w:
-        df_beta['Diff'] = df_beta[col_cur_w] - df_beta[col_tgt_w]
+    target_port_col = '포트폴리오 구분'
+    if target_port_col in df_asset.columns:
+        # Rename to standard '포트폴리오' for downstream consistency
+        df_merged = df_asset.rename(columns={target_port_col: '포트폴리오'})
+    else:
+        st.error(f"'{target_port_col}' 컬럼을 찾을 수 없습니다. (데이터 컬럼: {list(df_asset.columns)})")
+        st.stop()
         
-        c_chart, c_table = st.columns([1, 2])
+    # 3. Filter by Owner (if selected in Sidebar)
+    # Assumes '소유자' col exists in df_asset
+    if selected_owners and '소유자' in df_merged.columns:
+        df_merged = df_merged[df_merged['소유자'].isin(selected_owners)]
         
-        with c_chart:
-            # Donut Chart for Current Allocation
-            fig_donut = px.pie(
-                df_beta, 
-                names=col_ticker, 
-                values=col_cur_w, 
-                hole=0.4,
-                title="현재 자산 배분"
+    # 4. Portfolio Filter (Added Widget)
+    all_ports = sorted(df_merged['포트폴리오'].dropna().unique())
+    # Custom Sort if possible
+    custom_order = ['쇼호 α', '쇼호 β', '조연재', '조이재', '박행자']
+    all_ports.sort(key=lambda x: custom_order.index(x) if x in custom_order else 999)
+    
+    selected_portfolios = st.multiselect("Select Portfolios", all_ports, default=all_ports)
+    
+    if selected_portfolios:
+        df_merged = df_merged[df_merged['포트폴리오'].isin(selected_portfolios)]
+
+    # 5. Filter out zero evaluation assets
+    df_merged = df_merged[df_merged['평가금액'] > 0]
+    
+    # 6. GroupBy & Aggregate (The Pivot Step)
+    # Ensure numeric types for new columns
+    # User requested to use sheet columns for '평단가', '현재가'
+    extra_nums = ['보유주수', '배당수익', '확정손익', '평단가', '현재가']
+    for c in extra_nums:
+        if c in df_merged.columns:
+            df_merged[c] = pd.to_numeric(df_merged[c], errors='coerce').fillna(0)
+        else:
+            df_merged[c] = 0
+
+    # Group by [Portfolio, Ticker] -> Sum [Invested, Eval, Profit, Qty, Div, Realized]
+    # For Prices, we average them (assuming consistency per ticker).
+    df_pivot = df_merged.groupby(['포트폴리오', '종목'], as_index=False).agg({
+        '매입금액': 'sum',
+        '평가금액': 'sum',
+        '총평가손익': 'sum',
+        '보유주수': 'sum',
+        '배당수익': 'sum',
+        '확정손익': 'sum',
+        '평단가': 'mean', # User requested sheet column
+        '현재가': 'mean'  # User requested sheet column
+    })
+    
+    # 7. Calculate Derived Metrics (ReturnRate only)
+    # ReturnRate
+    df_pivot['ReturnRate'] = 0.0
+    mask_invest = df_pivot['매입금액'] != 0
+    df_pivot.loc[mask_invest, 'ReturnRate'] = (df_pivot.loc[mask_invest, '평가금액'] / df_pivot.loc[mask_invest, '매입금액'] - 1) * 100
+    
+    # Removed Manual AvgPrice/CurPrice Calc as per User Request
+    
+    # Removed Manual AvgPrice/CurPrice Calc as per User Request
+
+    # 8. Render Treemaps & Tables
+    unique_ports = sorted(df_pivot['포트폴리오'].unique())
+    # Re-sort using custom order
+    unique_ports.sort(key=lambda x: custom_order.index(x) if x in custom_order else 999)
+
+    if not unique_ports:
+        st.info("데이터가 없습니다.")
+    else:
+        for port in unique_ports:
+            st.subheader(port)
+            
+            df_p = df_pivot[df_pivot['포트폴리오'] == port].copy()
+            
+            if df_p.empty:
+                continue
+
+            # --- Dynamic Font Size Logic ---
+            min_val = df_p['평가금액'].min()
+            max_val = df_p['평가금액'].max()
+            
+            def get_font_size(val):
+                if max_val == min_val: return 24
+                norm = (val - min_val) / (max_val - min_val)
+                return 14 + (norm * 66) 
+            
+            df_p['TargetFontSize'] = df_p['평가금액'].apply(get_font_size)
+
+            # --- Debug: Show Data ---
+            # st.dataframe(df_p) # Uncomment if needed
+            
+            # --- Custom Coloring & Structure (go.Treemap) ---
+            # User Request: Dark Portfolio Background, Colored Tiles, No Borders, Big Text.
+            # Strategy: Pre-calculate Hex colors for all nodes.
+            
+            # Helper to generate color from value (-30 to +30)
+            def get_color_hex(val):
+                # Clamp to range
+                v = max(-30, min(30, val))
+                # Normalize to 0-1 for Red-Yellow-Green (0=Red, 0.5=Yellow, 1=Green)
+                # But typically RdYlGn: 0=Red, 1=Green.
+                # My range: -30(Red) -> 0(Gray/Black?) -> +30(Green).
+                # Plotly 'RdYlGn' is Red(Low) -> Green(High).
+                norm = (v + 30) / 60.0
+                return px.colors.sample_colorscale('RdYlGn', [norm])[0]
+            
+            # 1. Prepare Data
+            df_p['종목'] = df_p['종목'].astype(str)
+            
+            # Root Node
+            root_id = port
+            root_label = port
+            root_parent = ""
+            root_value = df_p['평가금액'].sum()
+            root_color = "#262626" 
+            
+            # Root Custom Data (Sum/Mean where applicable for Portfolio Level)
+            # Order: [TotalProfit, ReturnRate, Invested, Qty, AvgPrice, CurPrice, Div, Realized]
+            # Note: Prices/Qty not meaningful for Root Sum, but fill 0 for structure.
+            root_custom = [
+                df_p['총평가손익'].sum(), 
+                0, # Root Return
+                df_p['매입금액'].sum(),
+                0, 0, 0, # Qty, Avg, Cur
+                df_p['배당수익'].sum(),
+                df_p['확정손익'].sum()
+            ]
+            
+            # Child Nodes
+            child_ids = df_p['종목'].tolist()
+            child_labels = df_p['종목'].tolist()
+            child_parents = [root_id] * len(df_p)
+            child_values = df_p['평가금액'].tolist()
+            child_colors = df_p['ReturnRate'].apply(get_color_hex).tolist()
+            
+            # Columns to pass to tooltips
+            # Order MUST match root_custom
+            cols_to_hover = ['총평가손익', 'ReturnRate', '매입금액', '보유주수', '평단가', '현재가', '배당수익', '확정손익']
+            child_custom = df_p[cols_to_hover].values.tolist()
+            
+            ids = [root_id] + child_ids
+            labels = [root_label] + child_labels
+            parents = [root_parent] + child_parents
+            values = [root_value] + child_values
+            colors = [root_color] + child_colors
+            custom_data = [root_custom] + child_custom
+
+            # Rich Hover Template (Modern/Sophisticated Design)
+            # Uses HTML styling for "Card" look.
+            # 0:Profit, 1:Return, 2:Invest, 3:Qty, 4:Avg, 5:Cur, 6:Div, 7:Realized
+            hover_template = (
+                "<span style='font-size:18px; font-weight:bold'>%{label}</span><br>" +
+                "<span style='font-size:12px; color:#aaaaaa'>%{customdata[3]:,.0f}주 보유</span><br><br>" +
+                
+                "<span style='color:#aaaaaa'>평가금액:</span> <b style='font-size:16px'>₩%{value:,.0f}</b> " +
+                "<span style='font-size:14px'>(%{customdata[1]:.2f}%)</span><br>" +
+                
+                "<span style='color:#aaaaaa'>매입금액:</span> <b>₩%{customdata[2]:,.0f}</b><br>" +
+                "<span style='color:#aaaaaa'>총 손 익:</span> <b>₩%{customdata[0]:,.0f}</b><br><br>" +
+                
+                "<span style='color:#aaaaaa'>현 재 가:</span> ₩%{customdata[5]:,.0f}<br>" +
+                "<span style='color:#aaaaaa'>평 단 가:</span> ₩%{customdata[4]:,.0f}<br><br>" +
+                
+                "<span style='font-size:11px; color:#888888'>배당금 ₩%{customdata[6]:,.0f} | 실현손익 ₩%{customdata[7]:,.0f}</span>" +
+                "<extra></extra>"
             )
-            st.plotly_chart(fig_donut, use_container_width=True)
-            
-        with c_table:
-            # Table with Alerts
-            st.write("#### 리밸런싱 신호 (허용범위 ±5%)")
-            
-            def highlight_beta(row):
-                val = row['Diff']
-                if val > 0.05:
-                    # Sell: Soft Red background, White text
-                    return ['background-color: #ef5350; color: white; font-weight: bold;'] * len(row) 
-                elif val < -0.05:
-                    # Buy: Soft Green background, White text
-                    return ['background-color: #66bb6a; color: white; font-weight: bold;'] * len(row) 
-                return [''] * len(row)
 
-            # Format for display
-            display_beta = df_beta.copy()
+            # 1. Calculate Adaptive Font Sizes (Python Logic)
+            # Proportional to Value: Min 12px, Max 40px
+            max_val = df_p['평가금액'].max()
+            def calc_font_size(val):
+                if max_val == 0: return 12
+                # Sqrt scale usually feels more natural for Area-based viz
+                ratio = (val / max_val) ** 0.5 
+                size = 12 + (ratio * 28) # 12 + 0~28 = 12~40
+                return int(size)
             
-            # Normalize to 0.0-1.0 if it looks like 0-100
-            # Ensure columns are numeric just in case
-            cols_to_check = [col_cur_w, col_tgt_w, 'Diff']
-            for c in cols_to_check:
-                display_beta[c] = pd.to_numeric(display_beta[c], errors='coerce').fillna(0)
-
-            if display_beta[col_tgt_w].max() > 1.0: # Likely 0-100 scale
-                display_beta[col_cur_w] /= 100
-                display_beta[col_tgt_w] /= 100
-                display_beta['Diff'] /= 100
+            font_sizes = df_p['평가금액'].apply(calc_font_size).tolist()
             
-            # Define formatting
-            format_dict = {
-                col_cur_w: '{:.1%}',
-                col_tgt_w: '{:.1%}',
-                'Diff': '{:+.1%}'
-            }
+            # Root Node needs a size too (prepend)
+            # Root value is sum, so it takes max size
+            font_sizes = [40] + font_sizes
 
-            cols_to_show = [col_ticker, col_cur_w, col_tgt_w, 'Diff']
-            if col_owner:
-                 cols_to_show.insert(0, col_owner)
+            fig_tree = go.Figure(go.Treemap(
+                ids=ids,
+                labels=labels,
+                parents=parents,
+                values=values,
+                branchvalues='total',
+                marker=dict(
+                    colors=colors,
+                    pad=dict(t=2, l=2, r=2, b=2) # 4. Padding added
+                ),
+                textinfo="label+text+value",
+                # Text Template Simplified (One Line to prevent overlap)
+                texttemplate="<b>%{label}</b>  %{customdata[1]:.2f}%",
+                hovertemplate=hover_template,
+                textposition="middle center",
+                # Overlap Prevention (Pass calculated sizes)
+                textfont=dict(family="Arial", size=font_sizes),
+                customdata=custom_data
+            ))
+            
+            # Update Traces for Tooltip Styling
+            fig_tree.update_traces(
+                hoverlabel=dict(
+                    bgcolor="#1f1f1f",
+                    bordercolor="#333333",
+                    font=dict(family="Arial", size=14, color="#ffffff")
+                )
+            )
+            
+            fig_tree.update_layout(
+                margin=dict(t=0, l=0, r=0, b=0),
+                height=500,
+                autosize=True,
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                uniformtext=dict(mode=None) # Disable basic uniformtext
+            )
+            
+            st.plotly_chart(fig_tree, use_container_width=True, config={'displayModeBar': False}, key=f"treemap_{port}_{len(df_p)}")
+            
+            # Asset Table removed as per user request
 
+# --- Page 4: Historical Analysis ---
+elif page == "Historical Analysis":
+    st.header("Historical Performance Analysis")
+    st.caption("Total Profit = Dividend + Realized Profit")
+
+    if df_inv is not None and not df_inv.empty:
+        # 1. Map Columns
+        col_port =   next((c for c in df_inv.columns if '포트폴리오' in c or 'Portfolio' in c), None)
+        col_ticker = next((c for c in df_inv.columns if '종목' in c or 'Ticker' in c), None)
+        col_div =    next((c for c in df_inv.columns if '배당수익' in c or 'Dividend' in c), None)
+        col_real =   next((c for c in df_inv.columns if '확정손익' in c or 'Realized' in c), None)
+        
+        if col_port and col_ticker and col_div and col_real:
+            # 2. Select & Rename
+            df_hist_view = df_inv[[col_port, col_ticker, col_div, col_real]].copy()
+            df_hist_view.columns = ['Portfolio', 'Ticker', 'Dividend', 'Realized']
+            
+            # Numeric conversion
+            for c in ['Dividend', 'Realized']:
+                df_hist_view[c] = pd.to_numeric(df_hist_view[c], errors='coerce').fillna(0)
+            
+            # 3. Aggregate (Fix: Merge duplicate tickers per portfolio, e.g. Owners)
+            df_hist_view = df_hist_view.groupby(['Portfolio', 'Ticker'], as_index=False)[['Dividend', 'Realized']].sum()
+            df_hist_view['TotalProfit'] = df_hist_view['Dividend'] + df_hist_view['Realized']
+            
+            # 4. Filter by Portfolio (Default: Shoho Alpha)
+            all_ports = sorted(df_hist_view['Portfolio'].unique().tolist())
+            default_selection = ['쇼호 α'] if '쇼호 α' in all_ports else [all_ports[0]] if all_ports else []
+            
+            sel_ports = st.multiselect("Select Portfolio", all_ports, default=default_selection)
+
+            # 5. Global Controls (Best/Worst, Top N)
+            c_sort1, c_sort2 = st.columns([1,1])
+            with c_sort1:
+                view_type = st.radio("View Type", ["Best Performers", "Worst Performers"], horizontal=True)
+            with c_sort2:
+                top_n = st.slider("Number of items", 5, 30, 10)
+            
+            ascending = True if view_type == "Worst Performers" else False
+
+            # 6. Render per Portfolio
+            if sel_ports:
+                for port in sel_ports:
+                    st.markdown(f"### {port}")
+                    
+                    # Filter for specific portfolio
+                    df_port = df_hist_view[df_hist_view['Portfolio'] == port]
+                    
+                    # Filter Zero Results
+                    df_port = df_port[df_port['TotalProfit'] != 0]
+
+                    # Sort
+                    df_sorted = df_port.sort_values('TotalProfit', ascending=ascending).head(top_n)
+                    
+                    if df_sorted.empty:
+                        st.info(f"No data for {port}")
+                        st.markdown("---")
+                        continue
+
+                    # Chart Prep
+                    df_long = df_sorted.melt(id_vars=['Ticker', 'Portfolio'], value_vars=['Dividend', 'Realized'], var_name='Type', value_name='Value')
+                    
+                    # Sort order for chart
+                    df_long['Ticker'] = pd.Categorical(df_long['Ticker'], categories=df_sorted['Ticker'].tolist(), ordered=True)
+                    df_long = df_long.sort_values('Ticker')
+
+                    # Chart
+                    fig_hist = px.bar(
+                        df_long,
+                        x='Ticker',
+                        y='Value',
+                        color='Type',
+                        title=f"{view_type} - {port} (Top {top_n})",
+                        text='Value',
+                        color_discrete_map={
+                            'Dividend': '#fbc02d', # Gold
+                            'Realized': '#4caf50', # Green
+                        }
+                    )
+                    fig_hist.update_traces(texttemplate='%{value:,.0f}', textposition='inside')
+                    fig_hist.update_layout(
+                        plot_bgcolor='rgba(0,0,0,0)',
+                        paper_bgcolor='rgba(0,0,0,0)',
+                        barmode='relative',
+                        yaxis_title="Profit (KRW)",
+                        xaxis_title=None,
+                        legend_title="Profit Type"
+                    )
+                    st.plotly_chart(fig_hist, use_container_width=True)
+
+                    # Table
+                    st.markdown(f"**{port} - Breakdown Table**")
+                    
+                    def style_profit(val):
+                        if not isinstance(val, (int, float)):
+                            return ''
+                        color = '#66bb6a' if val >= 0 else '#EB5E55'
+                        return f'color: {color}'
+
+                    st.dataframe(
+                        df_sorted.style.format("{:,.0f}", subset=['Dividend', 'Realized', 'TotalProfit'])
+                        .map(style_profit, subset=['Dividend', 'Realized', 'TotalProfit']),
+                        use_container_width=True
+                    )
+                    st.markdown("---")
+            else:
+                st.info("Please select at least one portfolio.")
+
+        else:
+            st.warning("Required columns (Dividend, Realized) not found in Inventory data.")
+            st.write("Available Columns:", df_inv.columns.tolist())
+
+
+    else:
+        st.info("No asset data available.")
+
+
+
+
+# --- Page 4: Transaction Input ---
+elif page == "Transaction Log":
+    st.header("Transaction Log")
+    st.caption("Entries will be saved to Google Sheet '00_거래일지'.")
+    
+    # 1. Layout with Tabs
+    tab_input, tab_view = st.tabs(["📝 Input Transaction", "📜 View Log"])
+
+    # Fetch options dynamically
+    options = data_loader.get_transaction_options()
+
+    # --- TAB 1: Input ---
+    with tab_input:
+        st.caption("Add a new transaction")
+        with st.form("transaction_form_page", clear_on_submit=True):
+            col_date, col_dummy = st.columns([1, 1])
+            with col_date:
+                txn_date = st.date_input("Date", datetime.today())
+            
+            # Enums
+            owners = options.get("owners", [])
+            accounts = options.get("accounts", [])
+            tickers = options.get("tickers", [])
+            types = options.get("types", [])
+            currencies = options.get("currencies", [])
+
+            c1, c2 = st.columns(2)
+            with c1:
+                sel_owner = st.selectbox("Owner", owners if owners else ["Custom"], index=None, placeholder="Select Owner...")
+            with c2:
+                sel_account = st.selectbox("Account", accounts if accounts else ["Custom"], index=None, placeholder="Select Account...")
+
+            # Ticker Select with capability to add new
+            sel_ticker = st.selectbox("Ticker", tickers if tickers else ["Custom"], index=None, placeholder="Select or Type Ticker...")
+            
+            c3, c4 = st.columns(2)
+            with c3:
+                sel_type = st.selectbox("Type", types if types else ["Buy", "Sell", "Div"], index=None, placeholder="Type")
+            with c4:
+                sel_currency = st.selectbox("Currency", currencies if currencies else ["$", "₩"], index=None, placeholder="Cur")
+            
+            c5, c6 = st.columns(2)
+            with c5:
+                txn_amount = st.number_input("Amount", min_value=0.0, step=1.0, format="%.0f", value=None, placeholder="0")
+            with c6:
+                txn_qty = st.number_input("Qty", min_value=0.0, step=0.0001, format="%.4f", value=None, placeholder="0.0000")
+            
+            txn_note = st.text_input("Note")
+            
+            submitted = st.form_submit_button("💾 Save to Sheet")
+            
+            if submitted:
+                new_row = {
+                    "날짜": txn_date.strftime("%Y-%m-%d"),
+                    "소유자": sel_owner,
+                    "계좌": sel_account,
+                    "종목": sel_ticker,
+                    "거래구분": sel_type,
+                    "통화": sel_currency,
+                    "거래금액": txn_amount if txn_amount is not None else 0,
+                    "수량": txn_qty if txn_qty is not None else 0,
+                    "비고": txn_note
+                }
+                if data_loader.add_transaction_log(new_row):
+                    st.success("Successfully Saved!")
+                    st.toast("Transaction added.", icon="✅")
+
+    # --- TAB 2: View Log ---
+    with tab_view:
+        df_txn_log = data.get('transactions')
+        
+        if df_txn_log is not None and not df_txn_log.empty:
+            # Filters
+            with st.expander("Filter Log", expanded=False):
+                col_f1, col_f2 = st.columns(2)
+                with col_f1:
+                    filter_owner = st.multiselect("Filter Owner", df_txn_log['소유자'].unique().tolist())
+                with col_f2:
+                    filter_ticker = st.multiselect("Filter Ticker", df_txn_log['종목'].unique().tolist())
+            
+            # Apply Filter
+            df_display = df_txn_log.copy()
+            if '날짜' in df_display.columns:
+                df_display['날짜'] = pd.to_datetime(df_display['날짜'], errors='coerce')
+                df_display = df_display.sort_values('날짜', ascending=False)
+                # Format Back to string for display? Or leave as datetime
+                df_display['날짜'] = df_display['날짜'].dt.strftime('%Y-%m-%d')
+            
+            if filter_owner:
+                df_display = df_display[df_display['소유자'].isin(filter_owner)]
+            if filter_ticker:
+                df_display = df_display[df_display['종목'].isin(filter_ticker)]
+            
             st.dataframe(
-                display_beta[cols_to_show].style.format(format_dict).apply(highlight_beta, axis=1),
+                df_display, 
                 use_container_width=True,
                 hide_index=True
             )
-            
-            # Actionable Alerts
-            alarms = []
-            for idx, row in df_beta.iterrows():
-                diff = row['Diff']
-                ticker = row[col_ticker]
-                owner_info = f"[{row[col_owner]}] " if col_owner and pd.notna(row[col_owner]) else ""
-                
-                # Re-check scale
-                threshold = 0.05 if row[col_tgt_w] <= 1.0 else 5.0
-                
-                if diff > threshold:
-                    alarms.append(f"🔴 **매도 (SELL)**: {owner_info}{ticker} 비중 초과 ({diff:.1%} > +5%)")
-                elif diff < -threshold:
-                    alarms.append(f"🟢 **매수 (BUY)**: {owner_info}{ticker} 비중 미달 ({diff:.1%} < -5%)")
-            
-            if alarms:
-                for a in alarms:
-                    if "SELL" in a:
-                        st.error(a)
-                    else:
-                        st.success(a)
-    else:
-        st.warning("Beta Portfolio columns not found. Check sheet headers.")
-
-
-# --- 4. Asset Inventory ---
-st.markdown("---")
-st.subheader("📦 전체 자산 상세")
-
-if df_inv is not None and not df_inv.empty:
-    with st.expander("상세 보기", expanded=True):
-        # 1. Define Column Mapping (Sheet Header -> Display Name)
-        # We try to find the best matching column in the sheet
-        col_map_targets = {
-            '포트폴리오 구분': ['포트폴리오', 'Portfolio', '구분'],
-            '종목': ['종목명', '종목', 'Item', 'Ticker'],
-            # Removed 'Owner' mapping
-            '평가금액': ['평가금액', 'EvalValue', 'Amount'],
-            '자산비중': ['자산비중', '비중', 'Weight'],
-            '총평가손익': ['총평가손익', '평가손익', '손익', 'GainLoss']
-        }
-        
-        final_cols = []
-        rename_map = {}
-        
-        for target, candidates in col_map_targets.items():
-            found = next((c for c in df_inv.columns if c in candidates or any(cand in c for cand in candidates)), None)
-            if found:
-                final_cols.append(found)
-                rename_map[found] = target
-        
-        # 2. Filter & Rename
-        if final_cols:
-            df_view = df_inv[final_cols].rename(columns=rename_map)
-            
-            # Ensure numeric columns before grouping
-            numeric_cols = ['평가금액', '자산비중', '총평가손익']
-            for nc in numeric_cols:
-                if nc in df_view.columns:
-                    df_view[nc] = pd.to_numeric(df_view[nc], errors='coerce').fillna(0)
-
-            # 3. Aggregate by Portfolio and Ticker
-            group_cols = [c for c in ['포트폴리오 구분', '종목'] if c in df_view.columns]
-            if group_cols:
-                 df_view = df_view.groupby(group_cols, as_index=False).sum()
-            
-            # Sort by Portfolio (Custom Order) then Evaluation Value (Desc)
-            sort_cols = []
-            ascending_vals = []
-            
-            if '포트폴리오 구분' in df_view.columns:
-                # Use the 'portfolios' list defined earlier for custom order
-                # Ensure existing values map to these categories
-                df_view['포트폴리오 구분'] = pd.Categorical(
-                    df_view['포트폴리오 구분'], 
-                    categories=portfolios, 
-                    ordered=True
-                )
-                sort_cols.append('포트폴리오 구분')
-                ascending_vals.append(True)
-            
-            if '평가금액' in df_view.columns:
-                sort_cols.append('평가금액')
-                ascending_vals.append(False)
-                
-            if sort_cols:
-                df_view = df_view.sort_values(by=sort_cols, ascending=ascending_vals)
-
-            # 4. Filtering (Portfolio & Ticker)
-            # Capture available options from the full df_view (before any filtering) to ensure all options are visible initially
-            all_ports = list(df_view['포트폴리오 구분'].unique()) if '포트폴리오 구분' in df_view.columns else []
-            all_tickers = list(df_view['종목'].unique()) if '종목' in df_view.columns else []
-            
-            f1, f2 = st.columns(2)
-
-            # Draw Filters
-            with f1:
-                 # Portfolio Filter
-                 sel_port = st.multiselect("포트폴리오 필터", all_ports, default=all_ports, key="multi_port")
-            with f2:
-                 # Ticker Filter
-                 sel_ticker = st.multiselect("종목 필터", all_tickers, default=all_tickers, key="multi_ticker")
-            
-            # Apply Filters
-            if '포트폴리오 구분' in df_view.columns:
-                df_view = df_view[df_view['포트폴리오 구분'].isin(sel_port)]
-            if '종목' in df_view.columns:
-                df_view = df_view[df_view['종목'].isin(sel_ticker)]
-
-            # Numeric conversion handled before grouping
-            
-            # Handle Percentage Scaling (0.12 -> 12)
-            if '자산비중' in df_view.columns:
-                if df_view['자산비중'].max() <= 1.0:
-                     df_view['자산비중'] *= 100
-            
-            # Cast Amount/Profit to int for clean display
-            int_cols = ['평가금액', '총평가손익']
-            for ic in int_cols:
-                if ic in df_view.columns:
-                    df_view[ic] = df_view[ic].astype(int)
-
-            # Determine View Mode (Mobile Card vs Table)
-            mobile_view = st.toggle("📱 모바일 카드 뷰 (카드형 보기)", value=True)
-
-            if mobile_view:
-                for index, row in df_view.iterrows():
-                    # Format values
-                    fmt_amt = "{:,.0f}".format(row['평가금액'])
-                    fmt_profit = "{:+,.0f}".format(row['총평가손익'])
-                    fmt_weight = "{:.0f}%".format(row['자산비중']) if '자산비중' in row else "-"
-                    
-                    # Profit Color
-                    profit_color = "#ff4b4b" if row['총평가손익'] < 0 else "#4CAF50" # Red for loss, Green for profit
-                    
-                    card_html = f"""
-                    <div style="
-                        background: linear-gradient(135deg, #2b2b2b 0%, #1a1a1a 100%);
-                        border: 1px solid rgba(255, 255, 255, 0.1);
-                        border-radius: 15px;
-                        padding: 20px;
-                        margin-bottom: 15px;
-                        box-shadow: 0 10px 20px rgba(0,0,0,0.15);
-                        transition: transform 0.2s;
-                    ">
-                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
-                            <span style="font-size: 1.15rem; font-weight: 700; color: #F5F5F7;">{row['종목']}</span>
-                            <span style="font-size: 0.8rem; color: #D1D1D6; background: rgba(255,255,255,0.1); padding: 4px 10px; border-radius: 12px; font-weight: 500;">{row['포트폴리오 구분']}</span>
-                        </div>
-                        <div style="font-size: 1.6rem; font-weight: 800; color: #FFFFFF; margin-bottom: 10px; letter-spacing: -0.5px;">
-                            ₩{fmt_amt}
-                        </div>
-                        <hr style="border: 0; height: 1px; background-image: linear-gradient(to right, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0)); margin-bottom: 10px;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.95rem;">
-                            <span style="color: {profit_color}; font-weight: 700;">{fmt_profit}</span>
-                            <span style="color: #8E8E93; font-weight: 500;">자산 비중 {fmt_weight}</span>
-                        </div>
-                    </div>
-                    """
-                    st.markdown(card_html, unsafe_allow_html=True)
-
-            else:
-                # Apply formatting using Pandas Styler to ensure commas are shown
-                # This is the most reliable way to get thousand separators
-                styler_view = df_view.style.format({
-                    "평가금액": "{:,.0f}",
-                    "총평가손익": "{:,.0f}",
-                    "자산비중": "{:.0f}%" 
-                })
-
-                # Display with Styler
-                st.dataframe(
-                    styler_view,
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "평가금액": st.column_config.NumberColumn(label="평가금액"),
-                        "총평가손익": st.column_config.NumberColumn(label="총평가손익"),
-                        "자산비중": st.column_config.NumberColumn(label="자산비중")
-                    }
-                )
+            st.caption(f"Total Rows: {len(df_display)}")
         else:
-            st.warning("요청하신 컬럼을 찾을 수 없습니다. 원본 데이터를 표시합니다.")
-            st.dataframe(df_inv)
+            st.info("No transaction log data found.")
 
+
+# --- Page 5: Beta Rebalancing ---
+elif page == "Beta Rebalancing":
+    st.header("Beta Portfolio Breakdown (쇼호 β)")
+    
+    # Check dependencies
+    try:
+        import yfinance as yf
+    except ImportError:
+        st.error("`yfinance` needed for Correlation/Risk analysis. Please install it.")
+        yf = None
+
+    if df_beta is not None and not df_beta.empty:
+        col_ticker = next((c for c in df_beta.columns if '종목' in c or 'Ticker' in c), None)
+        col_cur_w = next((c for c in df_beta.columns if '현재' in c or 'Current' in c), None)
+        col_tgt_w = next((c for c in df_beta.columns if '목표' in c or 'Target' in c), None)
+        col_owner = next((c for c in df_beta.columns if '소유자' in c or 'Owner' in c), None)
+        
+            # --- Data Prep & Aggregation ---
+        if col_ticker and col_cur_w and col_tgt_w and col_owner:
+            df_beta_calc = df_beta.copy()
+            # Filter empty tickers
+            df_beta_calc = df_beta_calc.dropna(subset=[col_ticker])
+            df_beta_calc = df_beta_calc[df_beta_calc[col_ticker].astype(str).str.strip() != '']
+            
+            # Identify Value Column (Amount)
+            col_eval_val = next((c for c in df_beta.columns if '평가금액' in c or '금액' in c or 'Eval' in c or 'Amount' in c), None)
+            
+            if not col_eval_val:
+                 st.error("Cannot find 'Eval Value' column to calculate amounts.")
+            else:
+                for c in [col_cur_w, col_tgt_w, col_eval_val]:
+                    df_beta_calc[c] = pd.to_numeric(df_beta_calc[c], errors='coerce').fillna(0)
+                
+                # Normalize decimals if percentages were > 1
+                if df_beta_calc[col_tgt_w].max() > 1.0:
+                    df_beta_calc[col_tgt_w] /= 100
+                
+                # --- CORE LOGIC: Per-Owner Rebalancing ---
+                # 1. Total Equity per Owner
+                owner_equity = df_beta_calc.groupby(col_owner)[col_eval_val].sum()
+                
+                # 2. Map Owner Equity to each row
+                df_beta_calc['OwnerTotal'] = df_beta_calc[col_owner].map(owner_equity)
+                
+                # 3. Target Amount = OwnerTotal * TargetWeight
+                df_beta_calc['TargetAmount'] = df_beta_calc['OwnerTotal'] * df_beta_calc[col_tgt_w]
+                
+                # 4. Diff Amount = Current - Target
+                # If Current > Target, Positive Diff -> SELL
+                # If Current < Target, Negative Diff -> BUY
+                df_beta_calc['DiffAmount'] = df_beta_calc[col_eval_val] - df_beta_calc['TargetAmount']
+                
+                # 5. Diff Weight (for Chart)
+                df_beta_calc['OwnerCurWeight'] = df_beta_calc[col_eval_val] / df_beta_calc['OwnerTotal']
+                df_beta_calc['DiffWeight'] = df_beta_calc['OwnerCurWeight'] - df_beta_calc[col_tgt_w]
+                
+                # 6. Calc Tolerance (Relative Band: Target * 20%)
+                df_beta_calc['Tolerance'] = df_beta_calc[col_tgt_w] * 0.20
+
+                # Enforce Custom Sort
+                custom_order = ['SPY', 'QQQ', 'GMF', 'VEA', 'BND', 'TIP', 'PDBC', 'GLD', 'VNQ', '달러', '원화']
+                df_beta_calc['SortKey'] = df_beta_calc[col_ticker].apply(
+                    lambda x: custom_order.index(x) if x in custom_order else 999
+                )
+                
+                # Sort by Ticker then Owner
+                df_beta_calc = df_beta_calc.sort_values(['SortKey', col_owner]).reset_index(drop=True)
+
+                # Total Equity (Global)
+                total_equity = df_beta_calc[col_eval_val].sum()
+
+            # --- TABS ---
+            t_rebal, t_attr, t_corr, t_risk = st.tabs(["⚖️ Rebalancing", "💸 Attribution", "🔗 Correlation", "📉 Signals"])
+
+            # 1. Rebalancing Tab
+            with t_rebal:
+                c1, c2 = st.columns([1.5, 1])
+                
+                with c1:
+                    # Deviation Bar Chart (Horizontal)
+                    # Label: Ticker (Owner)
+                    # Label already created in Data Prep IF col_owner exists? 
+                    # Re-check Data Prep. In Step 1386 replacement:
+                    # df_beta_calc['Label'] IS NOT created there. It was in the Aggregation logic which I removed.
+                    # So I must create it here.
+                    if col_owner:
+                        df_beta_calc['Label'] = df_beta_calc[col_ticker] + " (" + df_beta_calc[col_owner] + ")"
+                    else:
+                        df_beta_calc['Label'] = df_beta_calc[col_ticker]
+
+                    # Status based on Relative Tolerance
+                    def get_status(row):
+                        w_diff = row['DiffWeight']
+                        tol = row['Tolerance']
+                        
+                        if w_diff > tol: return "Over"
+                        elif w_diff < -tol: return "Under"
+                        return "Normal"
+                    
+                    df_beta_calc['Status'] = df_beta_calc.apply(get_status, axis=1)
+                    
+                    fig_diff = px.bar(
+                        df_beta_calc,
+                        y='Label',
+                        x='DiffWeight',
+                        color='Status',
+                        orientation='h',
+                        title="Deviation from Target (Per Account)",
+                        color_discrete_map={
+                            "Over": "#FF5252",
+                            "Under": "#4CAF50",
+                            "Normal": "#AECBEB"
+                        },
+                        text_auto='.1%'
+                    )
+                    
+                    # Sort logic
+                    sorted_labels = df_beta_calc['Label'].tolist()
+                    fig_diff.update_yaxes(categoryorder='array', categoryarray=sorted_labels[::-1]) 
+                    
+                    fig_diff.add_vline(x=0, line_width=1, line_color="white")
+                    fig_diff.update_layout(
+                        paper_bgcolor='rgba(0,0,0,0)',
+                        plot_bgcolor='rgba(0,0,0,0)',
+                        xaxis_title="Weight Difference",
+                        yaxis_title=None,
+                        xaxis=dict(tickformat=".0%")
+                    )
+                    st.plotly_chart(fig_diff, use_container_width=True)
+                
+                with c2:
+                    st.markdown("#### Action Table (Per Account)")
+                    st.caption(f"Total Equity: ₩{total_equity:,.0f} (Threshold: Target ±20%)")
+                    
+                    def get_action_str(row):
+                        d_amt = row['DiffAmount']
+                        w_diff = row['DiffWeight']
+                        tol = row['Tolerance']
+                        
+                        cost = abs(d_amt)
+                        fmt_cost = f"₩{cost:,.0f}"
+                        
+                        if w_diff > tol: return f"SELL {fmt_cost}"
+                        elif w_diff < -tol: return f"BUY {fmt_cost}"
+                        return "-"
+                    
+                    df_beta_calc['Action'] = df_beta_calc.apply(get_action_str, axis=1)
+                    
+                    # Highlight Styles
+                    def style_action(v):
+                        if "SELL" in v: return 'color: #FF5252; font-weight: bold;'
+                        elif "BUY" in v: return 'color: #4CAF50; font-weight: bold;'
+                        return 'color: gray; opacity: 0.5;'
+
+                    # Show Owner in Table if exists
+                    cols_to_disp = [col_ticker, 'Action']
+                    if col_owner:
+                        cols_to_disp.insert(1, col_owner)
+                    
+                    # Display with formatting
+                    st.dataframe(
+                        df_beta_calc[cols_to_disp].style.map(style_action, subset=['Action']),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+            # 2. Attribution Tab
+            with t_attr:
+                st.markdown("#### Profit Contribution by Asset")
+                # Need detailed inventory data for '쇼호 β'
+                if df_inv is not None:
+                     # Filter for Shoho Beta
+                     # Need correct column name for portfolio in inv
+                     inv_port_col = next((c for c in df_inv.columns if '포트폴리오' in c or 'Portfolio' in c), None)
+                     inv_pl_col = next((c for c in df_inv.columns if '손익' in c or 'Profit' in c or 'Gain' in c), None)
+                     inv_ticker_col = next((c for c in df_inv.columns if '종목' in c or 'Ticker' in c), None)
+                     
+                     if inv_port_col and inv_pl_col and inv_ticker_col:
+                         df_attr = df_inv[df_inv[inv_port_col].str.contains('쇼호 β', na=False)].copy()
+                         if not df_attr.empty:
+                             # Group by Ticker
+                             df_attr = df_attr.groupby(inv_ticker_col, as_index=False)[inv_pl_col].sum()
+                             
+                             # Sort by custom order
+                             df_attr['SortKey'] = df_attr[inv_ticker_col].apply(lambda x: custom_order.index(x) if x in custom_order else 999)
+                             df_attr = df_attr.sort_values('SortKey')
+                             
+                             df_attr['Color'] = df_attr[inv_pl_col].apply(lambda x: '#66bb6a' if x >= 0 else '#EB5E55')
+                             
+                             fig_attr = px.bar(
+                                 df_attr,
+                                 x=inv_ticker_col,
+                                 y=inv_pl_col,
+                                 title="Total Profit/Loss Contribution (KRW)",
+                                 text_auto=True
+                             )
+                             fig_attr.update_traces(marker_color=df_attr['Color'])
+                             fig_attr.update_layout(
+                                 plot_bgcolor='rgba(0,0,0,0)',
+                                 paper_bgcolor='rgba(0,0,0,0)',
+                                 xaxis_title=None,
+                                 yaxis_title="Profit/Loss (KRW)"
+                             )
+                             st.plotly_chart(fig_attr, use_container_width=True)
+                         else:
+                             st.info("No holding details found for '쇼호 β'.")
+                     else:
+                         st.warning("Inventory columns missing.")
+
+            # 3. Correlation Tab
+            with t_corr:
+                st.markdown("#### Asset Correlation Heatmap (1Y Daily)")
+                st.caption("Fetches live data via yfinance. '원화' and '달러' excluded.")
+                
+                # Filter tickers valid for yfinance (exclude KRW/USD cash proxies if they are just cash)
+                # Tickers: SPY, QQQ, GMF, VEA, BND, TIP, PDBC, GLD, VNQ
+                # Note: '달러', '원화' are not tickers.
+                # Also deduplicate keys (unique tickers only)
+                valid_tickers = [t for t in df_beta_calc[col_ticker].unique() if t not in ['달러', '원화', '현금']]
+                
+                if st.button("Generate Correlation Matrix"):
+                    with st.spinner(f"Fetching data for {len(valid_tickers)} assets..."):
+                        if yf:
+                            try:
+                                # Try to use curl_cffi session if yfinance requires it
+                                try:
+                                    from curl_cffi import requests as cffi_requests
+                                    # Impersonate Chrome to avoid rate limiting
+                                    session = cffi_requests.Session(impersonate="chrome")
+                                    # curl_cffi session verify=False
+                                    session.verify = False
+                                except ImportError:
+                                    # Fallback to standard requests if curl_cffi missing
+                                    import requests
+                                    from requests.packages.urllib3.exceptions import InsecureRequestWarning
+                                    import warnings
+                                    warnings.simplefilter('ignore', InsecureRequestWarning)
+                                    session = requests.Session()
+                                    session.verify = False
+
+                                data_frames = []
+                                failed_tickers = []
+                                
+                                progress_bar = st.progress(0)
+                                
+                                for idx, t in enumerate(valid_tickers):
+                                    try:
+                                        # Use Ticker object with session
+                                        ticker_obj = yf.Ticker(t, session=session)
+                                        hist = ticker_obj.history(period="1y", interval="1d")
+                                        
+                                        if not hist.empty and 'Close' in hist.columns:
+                                            s_close = hist['Close']
+                                            s_close.name = t
+                                            # Remove timezone
+                                            if s_close.index.tz is not None:
+                                                s_close.index = s_close.index.tz_localize(None)
+                                            data_frames.append(s_close)
+                                        else:
+                                            # Sometimes rate limit helps to wait
+                                            failed_tickers.append(t)
+                                    except Exception as e:
+                                        failed_tickers.append(f"{t}")
+                                    
+                                    progress_bar.progress((idx + 1) / len(valid_tickers))
+                                
+                                progress_bar.empty()
+                                
+                                if data_frames:
+                                    # Merge
+                                    yf_data = pd.concat(data_frames, axis=1)
+                                    corr_matrix = yf_data.corr()
+                                    
+                                    # Plot
+                                    fig_corr = px.imshow(
+                                        corr_matrix,
+                                        text_auto=".2f",
+                                        aspect="auto",
+                                        color_continuous_scale="RdBu_r",
+                                        zmin=-1, zmax=1,
+                                        title=f"Asset Correlation Matrix ({len(data_frames)} Tickers)"
+                                    )
+                                    fig_corr.update_layout(
+                                        plot_bgcolor='rgba(0,0,0,0)',
+                                        paper_bgcolor='rgba(0,0,0,0)'
+                                    )
+                                    st.plotly_chart(fig_corr, use_container_width=True)
+                                    
+                                    if failed_tickers:
+                                        st.warning(f"Could not fetch: {', '.join(failed_tickers)}")
+                                else:
+                                    st.error("No data fetched. Check tickers or network.")
+                                    if failed_tickers:
+                                        st.write("Failures:", failed_tickers)
+                                
+                            except Exception as e:
+                                st.error(f"Critical Error: {e}")
+                                st.write("Tickers attempted:", valid_tickers)
+
+            # 4. Signals Tab (Autocorrelation)
+            with t_risk:
+                st.markdown("#### Portfolio Autocorrelation (Trend Strength)")
+                st.caption("Checks if portfolio returns are correlated with past returns. < 0 means trend breakdown.")
+                
+                if df_hist is not None and not df_hist.empty and '쇼호 β' in df_hist.columns:
+                     # Calculate Daily Returns
+                     series = df_hist.set_index('날짜')['쇼호 β'].sort_index()
+                     returns = series.pct_change().dropna()
+                     
+                     # Calculate Autocorrelation for lags 1 to 252 (1 year)
+                     lags = range(1, 60) # 2 months view usually enough for momentum check
+                     autocorrs = [returns.autocorr(lag=l) for l in lags]
+                     
+                     df_ac = pd.DataFrame({'Lag': lags, 'Autocorrelation': autocorrs})
+                     
+                     fig_ac = px.line(
+                         df_ac, x='Lag', y='Autocorrelation',
+                         title="Autocorrelation vs Lag (Days)",
+                         markers=True
+                     )
+                     fig_ac.add_hline(y=0, line_dash="dash", line_color="red", annotation_text="Zero Correlation")
+                     
+                     # Highlight danger zones
+                     fig_ac.update_traces(line_color="#AECBEB")
+                     fig_ac.update_layout(
+                         plot_bgcolor='rgba(0,0,0,0)', 
+                         paper_bgcolor='rgba(0,0,0,0)',
+                         xaxis_title="Lag (Days)",
+                         yaxis_title="Correlation Coefficient"
+                     )
+                     st.plotly_chart(fig_ac, use_container_width=True)
+                     
+                     # Simple Signal Interpretation
+                     # e.g. if Lag 1 autocorrelation is negative -> Mean Reversion?
+                     # if Lag 1 is positive -> Momentum?
+                     ac_1 = autocorrs[0] if autocorrs else 0
+                     st.info(f"**Lag-1 Autocorrelation**: {ac_1:.3f}")
+                     if ac_1 > 0.05:
+                         st.success("Currently in **Momentum** phase (Positive Correlation). Trend Likely to continue.")
+                     elif ac_1 < -0.05:
+                         st.warning("Currently in **Mean Reversion** phase (Negative Correlation). Volatility Expected.")
+                     else:
+                         st.write("Random Walk phase (No significant correlation).")
+
+        else:
+             st.warning("Beta Portfolio columns not found.")
