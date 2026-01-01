@@ -78,8 +78,20 @@ st.markdown("""
     @import url('https://cdn.jsdelivr.net/gh/sunn-us/SUIT/fonts/static/woff2/SUIT.css');
 
     /* Global Styling - SUIT Font Application */
-    html, body, [class*="css"], [class*="st-"], h1, h2, h3, h4, h5, h6 {
+    /* REMOVED 'button' to fix Sidebar Icon breaking (which is a button) */
+    html, body, p, div, span, label, 
+    h1, h2, h3, h4, h5, h6, [data-testid="stMarkdownContainer"] {
         font-family: 'SUIT', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif !important;
+    }
+    
+    /* Apply SUIT to Streamlit Widgets explicitly, safely */
+    .stButton button, .stTextInput input, .stSelectbox, .stTextArea textarea {
+        font-family: 'SUIT', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif !important;
+    }
+    
+    /* Explicitly protect Material Icons */
+    i, .material-icons, [class*="material-symbols"] {
+        font-family: 'Material Symbols Rounded', 'Material Icons' !important;
     }
     
     /* Metrics Label Adjustment for SUIT */
@@ -88,6 +100,20 @@ st.markdown("""
     }
     [data-testid="stMetricValue"] {
         font-weight: 700 !important;
+    }
+    
+    /* Fix Mobile White Space */
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem !important;
+    }
+    /* Hide Footer */
+    footer {
+        display: none !important;
+    }
+    /* Hide Header Decoration */
+    header {
+        visibility: hidden;
     }
 </style>
 """, unsafe_allow_html=True)
