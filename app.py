@@ -74,9 +74,20 @@ if not check_password():
 # --- Styling ---
 st.markdown("""
 <style>
-    /* Global Styling - Simple & Clean */
-    html, body, [class*="css"] {
-        font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif !important;
+    /* Import SUIT Font */
+    @import url('https://cdn.jsdelivr.net/gh/sunn-us/SUIT/fonts/static/woff2/SUIT.css');
+
+    /* Global Styling - SUIT Font Application */
+    html, body, [class*="css"], [class*="st-"], h1, h2, h3, h4, h5, h6 {
+        font-family: 'SUIT', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif !important;
+    }
+    
+    /* Metrics Label Adjustment for SUIT */
+    [data-testid="stMetricLabel"] {
+        font-weight: 500 !important;
+    }
+    [data-testid="stMetricValue"] {
+        font-weight: 700 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -371,7 +382,8 @@ elif page == "Portfolio Scorecard":
 
 # --- Page 3: Asset Inventory ---
 elif page == "Asset Details":
-    st.header("Asset Inventory Details")
+    # Custom Title to anchor the top of the page
+    st.markdown("<h1 style='font-size: 2.5rem; margin-bottom: 30px;'>Asset Inventory Details</h1>", unsafe_allow_html=True)
     
     # 1. Prepare Data
     df_asset = data['inventory'].copy()
@@ -433,8 +445,16 @@ elif page == "Asset Details":
         '배당수익': 'sum',
         '확정손익': 'sum',
         '평단가': 'mean', # User requested sheet column
-        '현재가': 'mean'  # User requested sheet column
+        '현재가': 'mean', # User requested sheet column
+        '화폐': 'first'   # NEW: Capture Currency
     })
+    
+    # Helper to map Currency to Symbol
+    def get_currency_symbol(curr):
+        if str(curr).upper() == 'USD': return '$'
+        return '₩'
+        
+    df_pivot['CurSymbol'] = df_pivot['화폐'].apply(get_currency_symbol)
     
     # 7. Calculate Derived Metrics (ReturnRate only)
     # ReturnRate
@@ -496,13 +516,13 @@ elif page == "Asset Details":
             
             # Root Node
             root_id = port
-            root_label = port
+            root_label = "" # Hide visual label (User Request)
             root_parent = ""
             root_value = df_p['평가금액'].sum()
             root_color = "#262626" 
             
             # Root Custom Data (Sum/Mean where applicable for Portfolio Level)
-            # Order: [TotalProfit, ReturnRate, Invested, Qty, AvgPrice, CurPrice, Div, Realized]
+            # Order: [TotalProfit, ReturnRate, Invested, Qty, AvgPrice, CurPrice, Div, Realized, CurSymbol]
             # Note: Prices/Qty not meaningful for Root Sum, but fill 0 for structure.
             root_custom = [
                 df_p['총평가손익'].sum(), 
@@ -510,7 +530,8 @@ elif page == "Asset Details":
                 df_p['매입금액'].sum(),
                 0, 0, 0, # Qty, Avg, Cur
                 df_p['배당수익'].sum(),
-                df_p['확정손익'].sum()
+                df_p['확정손익'].sum(),
+                '₩' # Root Currency Default
             ]
             
             # Child Nodes
@@ -522,7 +543,7 @@ elif page == "Asset Details":
             
             # Columns to pass to tooltips
             # Order MUST match root_custom
-            cols_to_hover = ['총평가손익', 'ReturnRate', '매입금액', '보유주수', '평단가', '현재가', '배당수익', '확정손익']
+            cols_to_hover = ['총평가손익', 'ReturnRate', '매입금액', '보유주수', '평단가', '현재가', '배당수익', '확정손익', 'CurSymbol']
             child_custom = df_p[cols_to_hover].values.tolist()
             
             ids = [root_id] + child_ids
@@ -534,7 +555,7 @@ elif page == "Asset Details":
 
             # Rich Hover Template (Modern/Sophisticated Design)
             # Uses HTML styling for "Card" look.
-            # 0:Profit, 1:Return, 2:Invest, 3:Qty, 4:Avg, 5:Cur, 6:Div, 7:Realized
+            # 0:Profit, 1:Return, 2:Invest, 3:Qty, 4:Avg, 5:Cur, 6:Div, 7:Realized, 8:Symbol
             hover_template = (
                 "<span style='font-size:18px; font-weight:bold'>%{label}</span><br>" +
                 "<span style='font-size:12px; color:#aaaaaa'>%{customdata[3]:,.0f}주 보유</span><br><br>" +
@@ -545,28 +566,36 @@ elif page == "Asset Details":
                 "<span style='color:#aaaaaa'>매입금액:</span> <b>₩%{customdata[2]:,.0f}</b><br>" +
                 "<span style='color:#aaaaaa'>총 손 익:</span> <b>₩%{customdata[0]:,.0f}</b><br><br>" +
                 
-                "<span style='color:#aaaaaa'>현 재 가:</span> ₩%{customdata[5]:,.0f}<br>" +
-                "<span style='color:#aaaaaa'>평 단 가:</span> ₩%{customdata[4]:,.0f}<br><br>" +
+                "<span style='color:#aaaaaa'>현 재 가:</span> %{customdata[8]}%{customdata[5]:,.0f}<br>" +
+                "<span style='color:#aaaaaa'>평 단 가:</span> %{customdata[8]}%{customdata[4]:,.0f}<br><br>" +
                 
                 "<span style='font-size:11px; color:#888888'>배당금 ₩%{customdata[6]:,.0f} | 실현손익 ₩%{customdata[7]:,.0f}</span>" +
                 "<extra></extra>"
             )
 
             # 1. Calculate Adaptive Font Sizes (Python Logic)
-            # Proportional to Value: Min 12px, Max 40px
-            max_val = df_p['평가금액'].max()
-            def calc_font_size(val):
-                if max_val == 0: return 12
-                # Sqrt scale usually feels more natural for Area-based viz
-                ratio = (val / max_val) ** 0.5 
-                size = 12 + (ratio * 28) # 12 + 0~28 = 12~40
-                return int(size)
+            # Scaling up to 180px as per User Request (Extreme Max)
+            total_val = df_p['평가금액'].sum()
             
-            font_sizes = df_p['평가금액'].apply(calc_font_size).tolist()
+            def calc_font_size_aggressive(val):
+                if total_val == 0: return 20
+                size = (val / total_val) * 450 # Further Increased Boost for 180px
+                return int(max(20, min(180, size))) # Cap at 180px
             
-            # Root Node needs a size too (prepend)
-            # Root value is sum, so it takes max size
-            font_sizes = [40] + font_sizes
+            font_sizes = df_p['평가금액'].apply(calc_font_size_aggressive).tolist()
+            font_sizes = [150] + font_sizes # Root gets Max (Title)
+            
+            # 2. Adaptive Text Color (Contrast Check)
+            # Yellowish (Near 0%) -> Black Text
+            # Strong Red/Green -> White Text
+            def get_text_color(val):
+                if abs(val) < 10: # Neutral/Yellow Zone
+                    return 'black'
+                return 'white'
+                
+            text_colors = df_p['ReturnRate'].apply(get_text_color).tolist()
+            # Root is Dark Grey (#262626) -> White Text
+            text_colors = ['white'] + text_colors
 
             fig_tree = go.Figure(go.Treemap(
                 ids=ids,
@@ -576,15 +605,16 @@ elif page == "Asset Details":
                 branchvalues='total',
                 marker=dict(
                     colors=colors,
-                    pad=dict(t=2, l=2, r=2, b=2) # 4. Padding added
+                    pad=dict(t=5, l=5, r=5, b=5) # 3. Thick Border
                 ),
                 textinfo="label+text+value",
-                # Text Template Simplified (One Line to prevent overlap)
-                texttemplate="<b>%{label}</b>  %{customdata[1]:.2f}%",
+                pathbar=dict(visible=False), # Hide Path Bar
+                # Reduced Line-Height to 0.7 for ultra-tight spacing (User Request)
+                texttemplate="<span style='line-height:0.7'><b>%{label}</b><br><span style='font-size:0.75em'>%{customdata[1]:.2f}%</span></span>",
                 hovertemplate=hover_template,
                 textposition="middle center",
-                # Overlap Prevention (Pass calculated sizes)
-                textfont=dict(family="Arial", size=font_sizes),
+                # Pass Adaptive Sizes & Colors
+                textfont=dict(family="SUIT", size=font_sizes, color=text_colors),
                 customdata=custom_data
             ))
             
@@ -593,7 +623,7 @@ elif page == "Asset Details":
                 hoverlabel=dict(
                     bgcolor="#1f1f1f",
                     bordercolor="#333333",
-                    font=dict(family="Arial", size=14, color="#ffffff")
+                    font=dict(family="SUIT", size=14, color="#ffffff")
                 )
             )
             
@@ -603,8 +633,11 @@ elif page == "Asset Details":
                 autosize=True,
                 paper_bgcolor='rgba(0,0,0,0)',
                 plot_bgcolor='rgba(0,0,0,0)',
-                uniformtext=dict(mode=None) # Disable basic uniformtext
+                # CRITICAL FIX: Disable uniformtext to allow custom sizes to take effect
+                uniformtext=None 
             )
+            
+
             
             st.plotly_chart(fig_tree, use_container_width=True, config={'displayModeBar': False}, key=f"treemap_{port}_{len(df_p)}")
             
