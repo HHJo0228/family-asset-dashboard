@@ -23,17 +23,28 @@ def load_data():
         
         # 3. 자산종합 (Inventory)
         df_inventory = conn.read(worksheet="자산종합", ttl="10m")
-        df_inventory = _clean_numeric_cols(df_inventory, ['Qty', 'Price', 'EvalValue', '수량', '평단가', '평가금액'])
+        df_inventory = _clean_numeric_cols(df_inventory, ['Qty', 'Price', 'EvalValue', '수량', '평단가', '평가금액', '배당수익', '확정손익'])
 
         # 4. 베타포트폴리오 (Beta Plan)
         df_beta = conn.read(worksheet="베타포트폴리오", ttl="10m")
         df_beta = _clean_numeric_cols(df_beta, ['CurrentWeight', 'TargetWeight', '현재비중', '목표비중'])
+        
+        # 5. 거래일지 (Transaction Log) - For Historical Analysis
+        df_txn = conn.read(worksheet="00_거래일지", ttl="10m")
+        # Ensure numeric
+        df_txn = _clean_numeric_cols(df_txn, ['Amount', 'Qty', '수량', '금액'])
 
+        # 6. 계좌마스터 (Account Master) - For Portfolio Mapping
+        df_master = conn.read(worksheet="01_계좌마스터", ttl="10m")
+        # Ensure it has '계좌' and '포트폴리오' columns
+        
         return {
             "history": df_history,
             "cagr": df_cagr,
             "inventory": df_inventory,
-            "beta_plan": df_beta
+            "beta_plan": df_beta,
+            "transactions": df_txn,
+            "account_master": df_master
         }
 
     except Exception as e:
@@ -121,7 +132,14 @@ def _clean_history_data(df):
     cols_to_numeric = [c for c in df.columns if c not in ['날짜', '요일']]
     for col in cols_to_numeric:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-        
+    
+    # Filter Weekends (User Request: Exclude 1=Sun, 7=Sat)
+    if '요일' in df.columns:
+        # Ensure it's numeric for comparison
+        df['요일'] = pd.to_numeric(df['요일'], errors='coerce')
+        # Drop rows where '요일' is 1 (Sunday) or 7 (Saturday)
+        df = df[~df['요일'].isin([1, 7])]
+
     return df
 
 def _clean_numeric_cols(df, candidates):
