@@ -285,7 +285,7 @@ if page == "Asset Trend":
                         y=df_chart[port], 
                         mode='lines', 
                         name=port,
-                        line=dict(color=PORT_COLORS.get(port, "#FFFFFF"), width=3) # Apply Specific Color
+                        line=dict(color=PORT_COLORS.get(port, "#FFFFFF"), width=2) # Thinner Line (User Request)
                     ))
             
             fig_asset.add_vline(x=baseline_date, line_width=1, line_dash="dash", line_color="gray", annotation_text="Base: 2025.09.22")
@@ -312,7 +312,7 @@ if page == "Asset Trend":
                         y=df_chart[idx_col], 
                         mode='lines', 
                         name=port,
-                        line=dict(color=PORT_COLORS.get(port, "#FFFFFF"), width=3) # Apply Specific Color
+                        line=dict(color=PORT_COLORS.get(port, "#FFFFFF"), width=2) # Thinner Line (User Request)
                     ))
             
             fig_idx.add_vline(x=baseline_date, line_width=1, line_dash="dash", line_color="gray", annotation_text="Start")
