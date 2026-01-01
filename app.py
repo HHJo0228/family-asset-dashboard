@@ -78,11 +78,13 @@ st.markdown("""
     @import url('https://cdn.jsdelivr.net/gh/sunn-us/SUIT/fonts/static/woff2/SUIT.css');
 
     /* Global Styling - SUIT Font Application */
-    /* REMOVED 'button' to fix Sidebar Icon breaking (which is a button) */
-    html, body, p, div, span, label, 
+    /* REMOVED 'button', 'div', 'span' to fix Sidebar Icon breaking. 
+       We rely on inheritance from 'body' for generic containers, 
+       and target text-specific tags for enforcement. */
+    html, body, p, label, 
     h1, h2, h3, h4, h5, h6, [data-testid="stMarkdownContainer"] {
         font-family: 'SUIT', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif !important;
-        background-color: transparent; /* Prevent double backgrounds */
+        background-color: transparent; 
     }
     
     /* FIX: Force Dark Background on Body to prevent White Bar on Mobile */
