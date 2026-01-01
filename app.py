@@ -82,6 +82,12 @@ st.markdown("""
     html, body, p, div, span, label, 
     h1, h2, h3, h4, h5, h6, [data-testid="stMarkdownContainer"] {
         font-family: 'SUIT', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif !important;
+        background-color: transparent; /* Prevent double backgrounds */
+    }
+    
+    /* FIX: Force Dark Background on Body to prevent White Bar on Mobile */
+    html, body {
+        background-color: #0E1117 !important;
     }
     
     /* Apply SUIT to Streamlit Widgets explicitly, safely */
