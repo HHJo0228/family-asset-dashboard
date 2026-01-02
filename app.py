@@ -64,6 +64,8 @@ def check_password():
             if submitted:
                 if password == st.secrets["general"]["password"]:
                     st.session_state["password_correct"] = True
+                    # Auto-inject auth param so user can bookmark this state
+                    st.query_params["auth"] = password 
                     st.rerun()
                 else:
                     st.session_state["password_correct"] = False
