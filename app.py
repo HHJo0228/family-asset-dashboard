@@ -451,9 +451,9 @@ elif page == "Asset Details":
         '현재가': 'mean', # User requested sheet column
         '화폐': 'first'   # NEW: Capture Currency
     })
-    # Helper to map Currency to Symbol
     def get_currency_symbol(curr):
-        if str(curr).upper() == 'USD': return '$'
+        s = str(curr).strip().upper()
+        if s in ['USD', '달러', 'DOLLAR']: return '$'
         return '₩'
     df_pivot['CurSymbol'] = df_pivot['화폐'].apply(get_currency_symbol)
     # 7. Calculate Derived Metrics (ReturnRate only)
@@ -571,7 +571,7 @@ elif page == "Asset Details":
             # --- D3.js Treemap ---
             # Helper to generate HTML logic (Finviz Style)
             if not df_p.empty:
-                html_code = d3_treemap.generate_d3_treemap_v4(df_p, port_name=port)
+                html_code = d3_treemap.generate_d3_treemap_v6(df_p, port_name=port)
                 st.components.v1.html(html_code, height=520, scrolling=False)
             else:
                 st.info("No data available for visualization.")
