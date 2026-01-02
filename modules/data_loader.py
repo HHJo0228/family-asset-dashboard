@@ -38,13 +38,22 @@ def load_data():
         df_master = conn.read(worksheet="01_계좌마스터", ttl="10m")
         # Ensure it has '계좌' and '포트폴리오' columns
         
+        # 7. 자산기록_TEMP (Current Snapshot)
+        # Expected cols: 포트폴리오, 투자원금, 평가금액
+        try:
+             df_temp_history = conn.read(worksheet="자산기록_TEMP", ttl="0") # Real-time
+             df_temp_history = _clean_numeric_cols(df_temp_history, ['투자원금', '평가금액'])
+        except Exception:
+             df_temp_history = pd.DataFrame() # Graceful fallback
+        
         return {
             "history": df_history,
             "cagr": df_cagr,
             "inventory": df_inventory,
             "beta_plan": df_beta,
             "transactions": df_txn,
-            "account_master": df_master
+            "account_master": df_master,
+            "temp_history": df_temp_history
         }
 
     except Exception as e:
@@ -150,6 +159,9 @@ def _clean_numeric_cols(df, candidates):
     df = df.copy()
     for col in candidates:
         if col in df.columns:
+             # Handle string formatting like commas or currency symbols
+             if df[col].dtype == object:
+                 df[col] = df[col].astype(str).str.replace(',', '').str.replace('₩', '').str.replace('$', '').str.replace(' ', '')
              df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     return df
 
