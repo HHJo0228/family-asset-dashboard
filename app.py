@@ -19,7 +19,11 @@ def check_password():
     
     # Check for Query Param (Auto-Login)
     # Allows ?auth=PASSWORD to bypass login screen (Useful for mobile bookmarks)
-    if st.query_params.get("auth") == st.secrets["general"]["password"]:
+    # Robust Check: specific cast to string to handle integer passwords in secrets.toml
+    query_auth = st.query_params.get("auth")
+    secret_pass = st.secrets["general"]["password"]
+    
+    if query_auth and str(query_auth) == str(secret_pass):
         st.session_state["password_correct"] = True
         return True
 
