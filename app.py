@@ -16,17 +16,6 @@ def check_password():
     # Check if already verified
     if st.session_state.get("password_correct", False):
         return True
-    
-    # Check for Query Param (Auto-Login)
-    # Allows ?auth=PASSWORD to bypass login screen (Useful for mobile bookmarks)
-    # Robust Check: specific cast to string AND case-insensitive to handle mobile capitalization
-    query_auth = st.query_params.get("auth")
-    secret_pass = st.secrets["general"]["password"]
-    
-    if query_auth and str(query_auth).strip().lower() == str(secret_pass).strip().lower():
-        st.session_state["password_correct"] = True
-        return True
-
     # Custom CSS for Login
     st.markdown("""
         <style>
@@ -64,8 +53,6 @@ def check_password():
             if submitted:
                 if password == st.secrets["general"]["password"]:
                     st.session_state["password_correct"] = True
-                    # Auto-inject auth param so user can bookmark this state
-                    st.query_params["auth"] = password 
                     st.rerun()
                 else:
                     st.session_state["password_correct"] = False
@@ -304,6 +291,11 @@ if page == "Asset Trend":
 # --- Page 2: Portfolio Performance (DoD & CAGR) ---
 elif page == "Portfolio Scorecard":
     st.header("Portfolio Scorecard")
+    st.caption("Detailed breakdown by portfolio")
+    
+    st.divider()
+    
+
 
     # Access Data
     df_temp = data.get("temp_history")
@@ -406,7 +398,18 @@ elif page == "Portfolio Scorecard":
             if sub_info:
                 st.caption(" | ".join(sub_info))
     
+    
+    # 5. Definitions Footnote (Using st.info for theme-adaptive visibility)
+
+    
     st.divider()
+    
+    # 5. Definitions (Minimalist, Right-aligned, Small - Moved to Bottom)
+    st.markdown("""
+    <div style="text-align: right; color: #999999; font-size: 11px; margin-top: 5px;">
+    Total Return: 배당/확정손익 제외, 매입 대비 평가수익률 &nbsp;|&nbsp; CAGR: '25.9.22 기준(100) 대비 연환산 상승률
+    </div>
+    """, unsafe_allow_html=True)
 # --- Page 3: Asset Inventory ---
 elif page == "Asset Details":
     # Custom Title to anchor the top of the page
@@ -593,7 +596,7 @@ elif page == "Transaction Log":
     st.header("Transaction Log")
     st.caption("Entries will be saved to Google Sheet '00_거래일지'.")
     # 1. Layout with Tabs
-    tab_input, tab_view = st.tabs(["📝 Input Transaction", "📜 View Log"])
+    tab_input, tab_view = st.tabs(["Input Transaction", "View Log"])
     # Fetch options dynamically
     options = data_loader.get_transaction_options()
     # --- TAB 1: Input ---
@@ -729,7 +732,7 @@ elif page == "Beta Rebalancing":
                 # Total Equity (Global)
                 total_equity = df_beta_calc[col_eval_val].sum()
             # --- TABS ---
-            t_rebal, t_attr, t_corr, t_risk = st.tabs(["⚖️ Rebalancing", "💸 Attribution", "🔗 Correlation", "📉 Signals"])
+            t_rebal, t_attr, t_corr, t_risk = st.tabs(["Rebalancing", "Attribution", "Correlation", "Signals"])
             # 1. Rebalancing Tab
             with t_rebal:
                 c1, c2 = st.columns([1.5, 1])
@@ -966,7 +969,7 @@ elif page == "Beta Rebalancing":
 elif page == "Historical Analysis":
     st.markdown("<h1 style='font-size: 2.5rem; margin-bottom: 30px;'>Historical Analysis</h1>", unsafe_allow_html=True)
     # Create Tabs
-    tab_perf, tab_corr, tab_mdd = st.tabs(["💰 Performance Attribution", "🧩 Correlation Matrix", "📉 Drawdown (MDD)"])
+    tab_perf, tab_corr, tab_mdd = st.tabs(["Performance Attribution", "Correlation Matrix", "Drawdown (MDD)"])
     # --- TAB 1: Performance Attribution (Existing Logic) ---
     with tab_perf:
         st.caption("Total Profit = Dividend + Realized Profit")
