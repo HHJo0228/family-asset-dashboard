@@ -16,6 +16,13 @@ def check_password():
     # Check if already verified
     if st.session_state.get("password_correct", False):
         return True
+    
+    # Check for Query Param (Auto-Login)
+    # Allows ?auth=PASSWORD to bypass login screen (Useful for mobile bookmarks)
+    if st.query_params.get("auth") == st.secrets["general"]["password"]:
+        st.session_state["password_correct"] = True
+        return True
+
     # Custom CSS for Login
     st.markdown("""
         <style>
