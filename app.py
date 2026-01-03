@@ -11,55 +11,80 @@ st.set_page_config(
     layout="wide"
 )
 # --- Password Protection ---
-def check_password():
-    """Returns `True` if the user had the correct password."""
-    # Check if already verified
-    if st.session_state.get("password_correct", False):
-        return True
-    # Custom CSS for Login
-    st.markdown("""
-        <style>
-            /* Minimalist Login Card */
-            [data-testid="stForm"] {
-                padding: 30px;
-                border-radius: 16px;
-                background-color: transparent;
-                border: 1px solid rgba(128, 128, 128, 0.2);
-                box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+# --- Password Protection (Streamlit Authenticator) ---
+import streamlit_authenticator as stauth
+import yaml
+from yaml.loader import SafeLoader
+
+def run_authentication():
+    # 1. Get Password from Secrets
+    plain_password = st.secrets["general"]["password"]
+    
+    # 2. Hash the password (Runtime hashing - okay for single user)
+    # Note: efficient enough for single user startup
+    hashed_passwords = [stauth.Hasher().hash(plain_password)]
+    
+    # 3. Create Config Dictionary
+    config = {
+        'credentials': {
+            'usernames': {
+                'admin': {
+                    'name': 'Admin',
+                    'password': hashed_passwords[0]
+                }
             }
-            .stButton > button {
-                width: 100%;
-                border-radius: 8px;
-                font-weight: 500;
-                margin-top: 15px;
-                height: 45px; /* Ensure button has good touch target */
-            }
-            /* Input field styling adjustment to prevent shrinking */
-            .stTextInput input {
-                min-height: 40px;
-            }
-            h1 { text-align: center; font-size: 1.8rem !important; margin-bottom: 20px; }
-        </style>
-    """, unsafe_allow_html=True)
-    # Centered Layout using Columns (Adjusted for better width)
-    # Using spacer columns to center the login form comfortably
-    col1, col2, col3 = st.columns([1, 1, 1])
-    with col2:
-        st.markdown("<br><br><br>", unsafe_allow_html=True) # Spacer
-        st.title("Login")
-        with st.form("login_form"):
-            password = st.text_input("Password", type="password")
-            submitted = st.form_submit_button("Enter")
-            if submitted:
-                if password == st.secrets["general"]["password"]:
-                    st.session_state["password_correct"] = True
-                    st.rerun()
-                else:
-                    st.session_state["password_correct"] = False
-                    st.error("Incorrect password")
-    return False
-if not check_password():
+        },
+        'cookie': {
+            'expiry_days': 1,
+            'key': 'asset_dashboard_signature_key', # Random string
+            'name': 'asset_dashboard_cookie'
+        },
+        'pre-authorized': {'emails': []}
+    }
+    
+    # 4. Initialize Authenticator
+    authenticator = stauth.Authenticate(
+        config['credentials'],
+        config['cookie']['name'],
+        config['cookie']['key'],
+        config['cookie']['expiry_days'],
+        # preheaders deprecated in some versions, simpler usage:
+    )
+    
+    # 5. Login Widget
+    # Custom widget location: center of screen (main)
+    # location='main' (default)
+    login_result = authenticator.login(location="main")
+    
+    if login_result:
+        name, authentication_status, username = login_result
+    else:
+        # Fallback if login returns None (initial state or pending)
+        name = st.session_state.get('name')
+        authentication_status = st.session_state.get('authentication_status')
+        username = st.session_state.get('username')
+    
+    if authentication_status:
+        # Success
+        return authenticator
+    elif authentication_status is False:
+        st.error('Username/password is incorrect')
+        st.stop()
+    elif authentication_status is None:
+        st.warning('Please enter your username and password')
+        st.stop()
+        
+    return None
+
+# Execution
+authenticator = run_authentication()
+if not st.session_state.get("authentication_status"):
     st.stop()
+
+# Logout Button in Sidebar (Optional but good practice)
+with st.sidebar:
+    authenticator.logout('Logout', 'main')
+
 # --- Styling ---
 # --- Styling ---
 st.markdown("""
@@ -660,10 +685,44 @@ elif page == "Transaction Log":
             # Apply Filter
             df_display = df_txn_log.copy()
             if '날짜' in df_display.columns:
-                df_display['날짜'] = pd.to_datetime(df_display['날짜'], errors='coerce')
+                # Create a new series for processed dates
+                raw_dates = df_display['날짜'].astype(str).str.strip()
+                processed_dates = pd.Series(pd.NaT, index=df_display.index)
+                
+                # 1. Identify Numeric (Excel Serial)
+                # Convert to numeric, forcing errors to NaN
+                dates_as_num = pd.to_numeric(raw_dates, errors='coerce')
+                # Excel Serial Check: > 25569 (1970-01-01)
+                is_serial = dates_as_num.notna() & (dates_as_num > 25569)
+                
+                if is_serial.any():
+                    processed_dates[is_serial] = pd.to_datetime(
+                        dates_as_num[is_serial], unit='D', origin='1899-12-30'
+                    )
+                
+                # 2. Process Strings (Standard Parsing)
+                # Rely on pandas to parse 'YYYY-MM-DD' or 'YYYY.MM.DD'
+                # If the user provides '9.19' without year, it might be parsed as 1900 or Current Year depending on locale,
+                # but explicit YYYY format is cleaner as requested by user.
+                mask_string = ~is_serial
+                if mask_string.any():
+                    processed_dates[mask_string] = pd.to_datetime(
+                        raw_dates[mask_string], errors='coerce'
+                    )
+                
+                # Assign back safely
+                df_display['날짜'] = processed_dates
+                
+                # Filter Logic
+                # 1. Must be NaT (valid date)
+                # 2. Must be > 1980 (sanity check)
+                
+                df_display = df_display[df_display['날짜'].notna()]
+                df_display = df_display[df_display['날짜'] > '1980-01-01']
+                
                 df_display = df_display.sort_values('날짜', ascending=False)
-                # Format Back to string for display? Or leave as datetime
                 df_display['날짜'] = df_display['날짜'].dt.strftime('%Y-%m-%d')
+                
             if filter_owner:
                 df_display = df_display[df_display['소유자'].isin(filter_owner)]
             if filter_ticker:
