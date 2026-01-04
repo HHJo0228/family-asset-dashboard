@@ -1026,25 +1026,42 @@ elif page == "Transaction Log":
                 st.session_state.ai_draft_data = st.session_state.ai_draft_data.reset_index(drop=True)
 
             with st.form("ai_input_form"):
-                edited_df = st.data_editor(
-                    st.session_state.ai_draft_data,
-                    key=f"ai_editor_{st.session_state.editor_key}", # Unique key per analysis
-                    num_rows="dynamic",
-                    use_container_width=True,
-                    column_config={
-                        "select": st.column_config.CheckboxColumn("Save?", help="Select rows to save"),
-                        "warning": st.column_config.TextColumn("Status", disabled=True),
-                        "type": st.column_config.SelectboxColumn(options=['매수', '매도', '배당금', '배당세', '이자', '입금', '출금', '환전', '확정손익']), # Korean Options
-                        "owner": st.column_config.SelectboxColumn(options=owners),
-                        "account": st.column_config.SelectboxColumn(options=accounts),
-                        "currency": st.column_config.SelectboxColumn(options=['$', '₩']),
-                        "note": st.column_config.SelectboxColumn(
-                            "Status (Pending/Settled)",
-                            options=["Pending", "Settled"],
-                            help="Pending: Order Execution (체결)\nSettled: Transaction/Deposit (정산)",
-                            required=True
-                        )
-                    },
+                    # Prepare Stock Options from Asset Master
+                    data_source = data_loader.load_data()
+                    valid_stock_names = []
+                    if data_source and 'asset_master' in data_source and not data_source['asset_master'].empty:
+                         # Assume '종목명' (Stock Name) is the target
+                         # Check column names like '종목명', 'Name', or 'Asset'
+                         am_cols = data_source['asset_master'].columns
+                         c_name = next((c for c in am_cols if '종목명' in c or 'Name' in c), None)
+                         if c_name:
+                             valid_stock_names = sorted(data_source['asset_master'][c_name].dropna().unique().tolist())
+
+                    edited_df = st.data_editor(
+                        st.session_state.ai_draft_data,
+                        key=f"ai_editor_{st.session_state.editor_key}", # Unique key per analysis
+                        num_rows="dynamic",
+                        use_container_width=True,
+                        column_config={
+                            "select": st.column_config.CheckboxColumn("Save?", help="Select rows to save"),
+                            "warning": st.column_config.TextColumn("Status", disabled=True),
+                            "type": st.column_config.SelectboxColumn(options=['매수', '매도', '배당금', '배당세', '이자', '입금', '출금', '환전', '확정손익']), # Korean Options
+                            "ticker": st.column_config.SelectboxColumn(
+                                "Asset Name",
+                                options=valid_stock_names,
+                                required=True,
+                                help="Must be a valid asset from Asset Master (02_종목마스터)"
+                            ),
+                            "owner": st.column_config.SelectboxColumn(options=owners),
+                            "account": st.column_config.SelectboxColumn(options=accounts),
+                            "currency": st.column_config.SelectboxColumn(options=['$', '₩']),
+                            "note": st.column_config.SelectboxColumn(
+                                "Status (Pending/Settled)",
+                                options=["Pending", "Settled"],
+                                help="Pending: Order Execution (체결)\nSettled: Transaction/Deposit (정산)",
+                                required=True
+                            )
+                        },
                     column_order=["select", "warning", "date", "type", "ticker", "amount", "qty", "price", "currency", "owner", "account", "note"]
                 )
                 
