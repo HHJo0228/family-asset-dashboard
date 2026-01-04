@@ -289,7 +289,8 @@ if target_owner == '박행자':
 page = st.sidebar.radio(
     "Select a page:",
     menu_options,
-    label_visibility="collapsed" 
+    label_visibility="collapsed",
+    key="main_navigation"
 )
 st.sidebar.markdown("---")
 # Global Filters (Apply to relevant pages like Asset Details)
