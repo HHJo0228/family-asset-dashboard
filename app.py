@@ -8,7 +8,8 @@ import modules.d3_treemap as d3_treemap
 # --- Page Config ---
 st.set_page_config(
     page_title="가족 자산 대시보드",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
 # --- Password Protection ---
 # --- Password Protection (Streamlit Authenticator) ---
