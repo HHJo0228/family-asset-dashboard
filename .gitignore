@@ -1,0 +1,20 @@
+
+# Streamlit secrets
+.streamlit/secrets.toml
+secrets.toml
+
+# Google Key Files
+*.json
+familyasset-*.json
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Virtual environment
+.venv/
+env/
+venv/
+
+# Debug scripts
+debug_*.py
