@@ -868,7 +868,7 @@ elif page == "Transaction Log":
                                 final_tickers.append(raw_ticker)
 
                         dfer['owner'] = final_owners
-                        dfer['account_name'] = final_accounts
+                        dfer['account'] = final_accounts
                         dfer['ticker'] = final_tickers # Validated Name or Raw Ticker
                         
                         # --- NOTE / STATUS HANDLING (CRITICAL FIX) ---
