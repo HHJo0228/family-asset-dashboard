@@ -48,7 +48,7 @@ def parse_transaction_image(image_data_list):
       - "Div" -> "배당금".
       - "현지배당세출금", "배당세" -> "배당세".
       - IMPORTANT: If description (적요) or details contain "배당" (e.g. "배당금입금", "배당금(외화)입금"), MUST classify as "배당금", NOT "입금".
-    - ticker: Stock Symbol (e.g. TSLA, 005930). PREFER Symbol over Name if available in image.
+    - ticker: Stock Symbol (e.g. TSLA, 005930) OR Stock Name (e.g. 현대차2우B). PREFER Symbol if available, but if only Name is visible, return Name.
     - price: Unit price (numeric)
     - qty: Quantity (numeric)
     - amount: Settlement Amount (정산금액) PREFERRED.

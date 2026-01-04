@@ -812,9 +812,11 @@ elif page == "Transaction Log":
                                          'account': r[c_acc] if c_acc else "General"
                                      }
 
-                        # 2. Asset Mapping (Ticker -> Name)
-                        # Build Lookup Dict: { 'QQQ': 'Invesco QQQ...', '005930': '삼성전자' }
-                        asset_map = {}
+                        # 2. Asset Mapping (Ticker -> Name) & Name Validation
+                        # Build Lookup Dicts
+                        ticker_map = {}
+                        valid_names = set()
+                        
                         if not df_asset_master.empty:
                             as_cols = df_asset_master.columns
                             c_tick = next((c for c in as_cols if '티커' in c or 'Ticker' in c), None)
@@ -823,7 +825,9 @@ elif page == "Transaction Log":
                             if c_tick and c_name:
                                 for _, r in df_asset_master.iterrows():
                                     t = str(r[c_tick]).strip().upper()
-                                    asset_map[t] = r[c_name]
+                                    n = str(r[c_name]).strip()
+                                    ticker_map[t] = n
+                                    valid_names.add(n)
 
                         # Apply Mappings
                         final_owners = []
@@ -833,42 +837,39 @@ elif page == "Transaction Log":
                         for idx, row in dfer.iterrows():
                             # Account Logic
                             ai_acc_num = str(row['account_number']).strip() if row['account_number'] else ""
-                            # Fuzzy matching for account number could be added, but exact match first
-                            # User screenshot shows '6459-6247'. 
                             matched_acc = acc_map.get(ai_acc_num)
                             if matched_acc:
                                 final_owners.append(matched_acc['owner'])
                                 final_accounts.append(matched_acc['account'])
                             else:
-                                # Fallback (Try partial match or default)
+                                # Fallback (Try partial match)
                                 found = False
                                 for k, v in acc_map.items():
-                                    if k in ai_acc_num or ai_acc_num in k: # Simple containment
+                                    if k in ai_acc_num or ai_acc_num in k: 
                                         final_owners.append(v['owner'])
                                         final_accounts.append(v['account'])
                                         found = True
                                         break
                                 if not found:
-                                    final_owners.append(owners[0] if owners else "")
-                                    final_accounts.append(accounts[0] if accounts else "")
-                                    
-                            # Ticker Logic
-                            ai_ticker = str(row['ticker']).strip().upper() if row['ticker'] else ""
-                            # If it's already a name, it won't match Ticker keys usually.
-                            # But if it is a Ticker (QQQ), we verify against map.
-                            if ai_ticker in asset_map:
-                                final_tickers.append(asset_map[ai_ticker])
+                                    final_owners.append(None)
+                                    final_accounts.append(None)
+                            
+                            # Ticker/Name Logic
+                            raw_ticker = str(row['ticker']).strip().upper() if row['ticker'] else ""
+                            
+                            # 1. Try mapping Ticker -> Name
+                            if raw_ticker in ticker_map:
+                                final_tickers.append(ticker_map[raw_ticker])
+                            # 2. Check if it's already a valid Name (e.g. "현대차2우B")
+                            elif raw_ticker in valid_names:
+                                final_tickers.append(raw_ticker) # It's valid name
+                            # 3. Fallback: Use raw value
                             else:
-                                # If direct match failed, maybe it IS the name already?
-                                # Or simple fuzzy check? For now, keep as is if not found.
-                                final_tickers.append(row['ticker'])
+                                final_tickers.append(raw_ticker)
 
                         dfer['owner'] = final_owners
-                        dfer['account'] = final_accounts
-                        dfer['ticker'] = final_tickers # Replace with mapped name
-                        dfer['owner'] = final_owners
-                        dfer['account'] = final_accounts
-                        dfer['ticker'] = final_tickers # Replace with mapped name
+                        dfer['account_name'] = final_accounts
+                        dfer['ticker'] = final_tickers # Validated Name or Raw Ticker
                         
                         # --- NOTE / STATUS HANDLING (CRITICAL FIX) ---
                         # 1. Preserve AI output if valid ('Pending' or 'Settled')
