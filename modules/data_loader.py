@@ -112,6 +112,14 @@ def load_data():
         st.error(f"Error loading data: {e}. Check sheet names and permissions.")
         return None
 
+@retry_with_backoff(retries=3)
+def _read_sheet(conn, worksheet, ttl=0):
+    return conn.read(worksheet=worksheet, ttl=ttl)
+
+@retry_with_backoff(retries=3)
+def _update_sheet(conn, worksheet, data):
+    return conn.update(worksheet=worksheet, data=data)
+
 def get_transaction_options():
     """
     Reads '00_거래일지' to get unique values for dropdowns.
@@ -119,7 +127,7 @@ def get_transaction_options():
     """
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
-        df = conn.read(worksheet="00_거래일지", ttl="0") # No cache to get latest
+        df = _read_sheet(conn, worksheet="00_거래일지", ttl="0") # Cached by decorator logic if needed, but here mostly for retry
         
         if df is None or df.empty:
             return {}
@@ -142,7 +150,7 @@ def add_transaction_log(new_row_data):
     """
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
-        df = conn.read(worksheet="00_거래일지", ttl="0")
+        df = _read_sheet(conn, worksheet="00_거래일지", ttl="0")
         
         # Convert dict to DataFrame
         new_df = pd.DataFrame([new_row_data])
@@ -151,7 +159,7 @@ def add_transaction_log(new_row_data):
         updated_df = pd.concat([df, new_df], ignore_index=True)
         
         # Update Sheet
-        conn.update(worksheet="00_거래일지", data=updated_df)
+        _update_sheet(conn, worksheet="00_거래일지", data=updated_df)
         
         # Clear cache to reflect changes immediately
         st.cache_data.clear()
@@ -167,7 +175,7 @@ def overwrite_transaction_log(df_new):
     """
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
-        conn.update(worksheet="00_거래일지", data=df_new)
+        _update_sheet(conn, worksheet="00_거래일지", data=df_new)
         st.cache_data.clear()
         return True
     except Exception as e:
@@ -182,7 +190,7 @@ def get_latest_transaction_log():
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         # Force fresh read
-        df = conn.read(worksheet="00_거래일지", ttl="0")
+        df = _read_sheet(conn, worksheet="00_거래일지", ttl="0")
         if df is None:
             return pd.DataFrame()
         return _clean_numeric_cols(df, ['Amount', 'Qty', '수량', '금액'])
