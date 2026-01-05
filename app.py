@@ -1036,6 +1036,14 @@ elif page == "Transaction Log":
                      c_name = next((c for c in am_cols if '종목명' in c or 'Name' in c), None)
                      if c_name:
                          valid_stock_names = sorted(data_source['asset_master'][c_name].dropna().unique().tolist())
+                         
+                     # SOFT VALIDATION: Add existing AI values to options so they don't disappear
+                     # This allows users to see "Hyundai Motor" (Invalid) and change it to "현대차" (Valid)
+                     current_ai_tickers = st.session_state.ai_draft_data['ticker'].dropna().unique().tolist()
+                     for t in current_ai_tickers:
+                         t_str = str(t).strip()
+                         if t_str and t_str not in valid_stock_names:
+                             valid_stock_names.append(t_str) # Temporarily add invalid ones to dropdown
 
                 edited_df = st.data_editor(
                     st.session_state.ai_draft_data,
@@ -1050,7 +1058,7 @@ elif page == "Transaction Log":
                             "Asset Name",
                             options=valid_stock_names,
                             required=True,
-                            help="Must be a valid asset from Asset Master (02_종목마스터)"
+                            help="Select from Asset Master. If 'Invalid' value appears, please change it."
                         ),
                         "owner": st.column_config.SelectboxColumn(options=owners),
                         "account": st.column_config.SelectboxColumn(options=accounts),
