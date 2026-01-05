@@ -17,6 +17,13 @@ def init_db():
     conn = get_connection()
     c = conn.cursor()
 
+    # Force Schema Reset (Dev Phase) - REMOVED to persist data
+    # c.execute("DROP VIEW IF EXISTS view_asset_inventory;")
+    # c.execute("DROP VIEW IF EXISTS view_transaction_details;")
+    # c.execute("DROP TABLE IF EXISTS transaction_log;")
+    # c.execute("DROP TABLE IF EXISTS asset_master;")
+    # c.execute("DROP TABLE IF EXISTS account_master;")
+
     # 1. Accounts Master
     c.execute("""
     CREATE TABLE IF NOT EXISTS account_master (
@@ -45,14 +52,12 @@ def init_db():
     c.execute("CREATE INDEX IF NOT EXISTS idx_asset_ticker ON asset_master(ticker);")
 
     # 3. Transaction Log
-    # Note: Removed 'owner' as it is normalized (joined via account_master)
-    # However, for Incremental Sync efficiency, we might need to know 'owner' to build the Hash?
-    # No, Hash builds from the GSheet fields. GSheet has 'owner'.
-    # We will exclude 'owner' from the physical table but use it for Hash generation in Python.
+    # Added 'owner' to resolve ambiguity (Account Name is not unique across owners)
     c.execute("""
     CREATE TABLE IF NOT EXISTS transaction_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         date TEXT NOT NULL,
+        owner TEXT NOT NULL, 
         account_name TEXT NOT NULL,
         asset_name TEXT NOT NULL,
         type TEXT NOT NULL,
@@ -69,6 +74,7 @@ def init_db():
     """)
     c.execute("CREATE INDEX IF NOT EXISTS idx_txn_date ON transaction_log(date);")
     c.execute("CREATE INDEX IF NOT EXISTS idx_txn_asset ON transaction_log(asset_name);")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_txn_owner ON transaction_log(owner);") # Good for filtering
 
     # 4. View: Transaction Details (Reconstruction)
     c.execute("DROP VIEW IF EXISTS view_transaction_details;")
@@ -77,7 +83,7 @@ def init_db():
     SELECT 
         t.id,
         t.date,
-        a.owner,
+        t.owner,
         t.account_name,
         t.asset_name,
         am.ticker,
@@ -88,7 +94,7 @@ def init_db():
         t.currency,
         t.note
     FROM transaction_log t
-    LEFT JOIN account_master a ON t.account_name = a.account_name
+    LEFT JOIN account_master a ON t.account_name = a.account_name AND t.owner = a.owner
     LEFT JOIN asset_master am ON t.asset_name = am.asset_name;
     """)
 
@@ -97,34 +103,34 @@ def init_db():
     c.execute("""
     CREATE VIEW view_asset_inventory AS
     SELECT 
-        a.owner,
+        t.owner,
         t.asset_name,
         am.ticker,
         
         -- 1. Quantity Calculation
         SUM(CASE
             -- A. Normal Assets
-            WHEN t.asset_name NOT IN ('원화', '달러') AND t.type = '매수' THEN t.qty
-            WHEN t.asset_name NOT IN ('원화', '달러') AND t.type = '매도' THEN -t.qty
+            WHEN am.asset_class = 'Stock' AND t.type = '매수' THEN t.qty
+            WHEN am.asset_class = 'Stock' AND t.type = '매도' THEN -t.qty
             
             -- B. Cash: KRW
-            WHEN t.asset_name = '원화' AND t.type = '입금' THEN t.qty 
-            WHEN t.asset_name = '원화' AND t.type = '출금' THEN -t.qty
-            WHEN t.asset_name = '원화' AND t.type = '환전' AND t.asset_name = '원화' THEN t.qty 
-            WHEN t.asset_name = '원화' AND t.type = '환전' AND t.asset_name = '달러' THEN -t.amount 
+            WHEN am.asset_class = 'Cash' AND t.asset_name = '원화' AND t.type = '입금' THEN t.qty 
+            WHEN am.asset_class = 'Cash' AND t.asset_name = '원화' AND t.type = '출금' THEN -t.qty
+            WHEN am.asset_class = 'Cash' AND t.asset_name = '원화' AND t.type = '환전' AND t.asset_name = '원화' THEN t.qty 
+            WHEN am.asset_class = 'Cash' AND t.asset_name = '원화' AND t.type = '환전' AND t.asset_name = '달러' THEN -t.amount 
             
             -- KRW form Trading
-            WHEN t.asset_name = '원화' AND t.type = '매도' AND t.currency = '₩' THEN t.amount 
-            WHEN t.asset_name = '원화' AND t.type = '매수' AND t.currency = '₩' THEN -t.amount
-            WHEN t.asset_name = '원화' AND t.type = '배당금' AND t.currency = '₩' THEN t.amount
+            WHEN am.asset_class = 'Cash' AND t.asset_name = '원화' AND t.type = '매도' AND t.currency = '₩' THEN t.amount 
+            WHEN am.asset_class = 'Cash' AND t.asset_name = '원화' AND t.type = '매수' AND t.currency = '₩' THEN -t.amount
+            WHEN am.asset_class = 'Cash' AND t.asset_name = '원화' AND t.type = '배당금' AND t.currency = '₩' THEN t.amount
 
             -- C. Cash: USD
-            WHEN t.asset_name = '달러' AND t.type = '환전' AND t.asset_name = '달러' THEN t.qty 
-            WHEN t.asset_name = '달러' AND t.type = '환전' AND t.asset_name = '원화' THEN -t.amount 
+            WHEN am.asset_class = 'Cash' AND t.asset_name = '달러' AND t.type = '환전' AND t.asset_name = '달러' THEN t.qty 
+            WHEN am.asset_class = 'Cash' AND t.asset_name = '달러' AND t.type = '환전' AND t.asset_name = '원화' THEN -t.amount 
             -- Trading Impact
-            WHEN t.asset_name = '달러' AND t.type = '매도' AND t.currency = '$' THEN t.amount
-            WHEN t.asset_name = '달러' AND t.type = '매수' AND t.currency = '$' THEN -t.amount
-            WHEN t.asset_name = '달러' AND t.type = '배당금' AND t.currency = '$' THEN t.amount
+            WHEN am.asset_class = 'Cash' AND t.asset_name = '달러' AND t.type = '매도' AND t.currency = '$' THEN t.amount
+            WHEN am.asset_class = 'Cash' AND t.asset_name = '달러' AND t.type = '매수' AND t.currency = '$' THEN -t.amount
+            WHEN am.asset_class = 'Cash' AND t.asset_name = '달러' AND t.type = '배당금' AND t.currency = '$' THEN t.amount
             
             ELSE 0 
         END) as current_qty,
@@ -140,9 +146,10 @@ def init_db():
         MAX(t.date) as last_transaction_date
 
     FROM transaction_log t
-    JOIN account_master a ON t.account_name = a.account_name
+    -- Use composite key for join
+    JOIN account_master a ON t.account_name = a.account_name AND a.owner = t.owner
     LEFT JOIN asset_master am ON t.asset_name = am.asset_name
-    GROUP BY a.owner, t.asset_name;
+    GROUP BY t.owner, t.asset_name;
     """)
 
     conn.commit()
