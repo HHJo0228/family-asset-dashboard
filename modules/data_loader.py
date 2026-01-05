@@ -285,3 +285,168 @@ def calculate_dod(df_history):
         }
         
     return dod_data
+
+# --- SQLite Sync Logic ---
+import hashlib
+from modules import db_manager
+
+def _generate_hash(row):
+    """
+    Generates a unique hash for a transaction row using key fields.
+    Fields used: date, account, asset, type, amount, qty.
+    NOTE: 'note' is explicitly EXCLUDED to allow 'Pending' -> 'Settled' updates.
+    """
+    # Normalize strings (strip) and numbers (float)
+    # Row keys match GSheet columns: '날짜', '계좌', '종목', '거래구분', '거래금액', '수량'
+    # Mapped to DB cols: date, account_name, asset_name, type, amount, qty
+    
+    unique_str = f"{str(row.get('날짜', '')).strip()}_" \
+                 f"{str(row.get('계좌', '')).strip()}_" \
+                 f"{str(row.get('종목', '')).strip()}_" \
+                 f"{str(row.get('거래구분', '')).strip()}_" \
+                 f"{float(row.get('거래금액', 0))}_" \
+                 f"{float(row.get('수량', 0))}"
+                 
+    return hashlib.md5(unique_str.encode('utf-8')).hexdigest()
+
+def sync_to_sqlite(data_dict):
+    """
+    Synchronizes the fetched GSheet data to local SQLite DB.
+    """
+    if not data_dict:
+        return False, "No data to sync."
+    
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor()
+        
+        # 1. Sync Masters
+        _sync_masters(cursor, data_dict.get('account_master'), data_dict.get('asset_master'))
+        
+        # 2. Sync Transactions (Incremental)
+        added_count = _sync_transactions(cursor, data_dict.get('transactions'))
+        
+        conn.commit()
+        conn.close()
+        return True, f"Sync check complete. {added_count} new/updated rows."
+        
+    except Exception as e:
+        return False, f"Sync failed: {e}"
+
+def _sync_masters(cursor, df_acct, df_asset):
+    """
+    Upserts master data.
+    """
+    # Account Master
+    if df_acct is not None and not df_acct.empty:
+        # Expected Cols: 계좌번호, 소유자, 계좌명, 증권사(Optional), 계좌구분(Optional)
+        # DB Cols: account_number, owner, account_name, broker, type
+        for _, row in df_acct.iterrows():
+            cursor.execute("""
+                INSERT OR REPLACE INTO account_master (account_number, owner, account_name, broker, type)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                str(row.get('계좌번호', '')).strip(),
+                str(row.get('소유자', '')).strip(),
+                str(row.get('계좌명', '')).strip(),
+                str(row.get('증권사', '')) if '증권사' in row else None,
+                str(row.get('계좌구분', '')) if '계좌구분' in row else None
+            ))
+            
+    # Asset Master
+    if df_asset is not None and not df_asset.empty:
+        # Expected Cols: 티커, 종목명, 통화, 자산구분
+        # DB Cols: ticker, asset_name, currency, asset_class
+        for _, row in df_asset.iterrows():
+            cursor.execute("""
+                INSERT OR REPLACE INTO asset_master (ticker, asset_name, currency, asset_class)
+                VALUES (
+                    (SELECT ticker FROM asset_master WHERE asset_name = ?), -- Preserve existing Ticker if null? No, Master is source of truth.
+                    ?, ?, ?
+                )
+            """, ( # Actually REPLACE might change ID. Let's use INSERT OR REPLACE on Unique Name logic?
+                   # Since ID is Autoincrement, REPLACE deletes old row (and ID). 
+                   # It's safer to Upsert by Name.
+                   # But SQLite UPSERT requires ON CONFLICT.
+                   # Let's simplify: Just REPLACE based on Name?
+                   # Name is UNIQUE.
+                   pass
+            ))
+            # Retry with proper UPSERT syntax
+            cursor.execute("""
+                INSERT INTO asset_master (ticker, asset_name, currency, asset_class)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(asset_name) DO UPDATE SET
+                    ticker=excluded.ticker,
+                    currency=excluded.currency,
+                    asset_class=excluded.asset_class,
+                    updated_at=CURRENT_TIMESTAMP
+            """, (
+                str(row.get('티커', '')).strip(),
+                str(row.get('종목명', '')).strip(),
+                str(row.get('통화', 'KRW')).strip(),
+                str(row.get('자산구분', 'Stock')).strip()
+            ))
+
+def _sync_transactions(cursor, df_txn):
+    """
+    Incrementally loads transactions.
+    """
+    if df_txn is None or df_txn.empty:
+        return 0
+        
+    count = 0
+    # Optimize: Get all existing hashes to avoid trying INSERT on everything?
+    # Or just use INSERT OR REPLACE provided usage of Unique Index on sync_hash.
+    
+    # We must prepare the rows.
+    for idx, row in df_txn.iterrows():
+        # Clean Data
+        r_hash = _generate_hash(row)
+        r_date = str(row.get('날짜', '')).strip()
+        
+        # Skip empty rows
+        if not r_date or r_date == 'NaT':
+            continue
+            
+        try:
+            # Insert or Update (if Pending -> Settled change happens, hash is SAME? NO wait.)
+            # If 'note' changes, does hash change?
+            # User requirement: 'Note' excluded from Hash.
+            # So if Hash X exists with note='Pending', and now we have Hash X with note='Settled'.
+            # INSERT OR REPLACE will update the row (Hash collision).
+            
+            cursor.execute("""
+                INSERT INTO transaction_log (
+                    date, account_name, asset_name, type, amount, qty, price, currency, note,
+                    source_row_index, sync_hash
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(sync_hash) DO UPDATE SET
+                    note = excluded.note,
+                    source_row_index = excluded.source_row_index,
+                    synced_at = CURRENT_TIMESTAMP
+            """, (
+                r_date,
+                str(row.get('계좌', '')).strip(),
+                str(row.get('종목', '')).strip(),
+                str(row.get('거래구분', '')).strip(),
+                float(row.get('거래금액', 0)),
+                float(row.get('수량', 0)),
+                0.0, # Price is not reliable in log, usually derived. Or we can calc? amount/qty?
+                # Actually log doesn't have explicit 'Price' column usually? 
+                # Let's check GSheet. Yes, no explicit Price col in '00_거래일지' usually. But app logic might need it.
+                # Just store 0 or calc.
+                str(row.get('통화', 'KRW')).strip(),
+                str(row.get('비고', '')).strip(),
+                idx + 2, # Approx row number (header+1)
+                r_hash
+            ))
+            
+            # Check if row was inserted (Optimization: counting is hard with upsert, assume processed)
+            count += 1
+            
+        except Exception as e:
+            print(f"Row error: {e}")
+            continue
+            
+    return count

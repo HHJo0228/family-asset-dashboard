@@ -4,7 +4,11 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
 from modules import data_loader, ai_parser
+import modules.db_manager as db_manager
 import modules.d3_treemap as d3_treemap
+
+# Initialize DB
+db_manager.init_db()
 # --- Page Config ---
 st.set_page_config(
     page_title="가족 자산 대시보드",
@@ -298,7 +302,23 @@ st.sidebar.markdown("---")
 selected_owners = []
 if page == "Asset Details" and owners_list:
     st.sidebar.subheader("Filters")
-    selected_owners = st.sidebar.multiselect("Select Owners", owners_list)
+    selected_owners = st.sidebar.multiselect("Owners", owners_list, default=owners_list)
+
+# --- DB Sync Control ---
+st.sidebar.markdown("---")
+if st.sidebar.button("🔄 Sync Database"):
+    with st.sidebar.status("Syncing to SQLite...", expanded=True) as status:
+        st.write("Fetching GSheet Data...")
+        # Force fresh fetch
+        fresh_data = data_loader.load_data() 
+        st.write("Updating DB...")
+        success, msg = data_loader.sync_to_sqlite(fresh_data)
+        if success:
+            status.update(label="Sync Complete!", state="complete", expanded=False)
+            st.sidebar.success(msg)
+        else:
+            status.update(label="Sync Failed", state="error")
+            st.sidebar.error(msg)
 st.sidebar.markdown("---")
 st.sidebar.caption("Last Update: " + (df_hist['날짜'].iloc[-1].strftime('%Y-%m-%d') if not df_hist.empty else "N/A"))
 if st.sidebar.button("Clear Cache"):
