@@ -4,6 +4,45 @@ import numpy as np
 from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
 
+
+def _clean_initial_balance(df):
+    """
+    Cleans the Initial Balance sheet to match Transaction format.
+    """
+    if df.empty:
+        return df
+        
+    # Standardize Headers
+    # Initial Sheet: 날짜, 소유자, 계좌, 종목, 포트, 통화, 매수금액, 수량
+    # Target: 날짜, 소유자, 계좌, 종목, 거래구분, 통화, 거래금액, 수량, 비고
+    
+    # 1. Date formatting
+    # Assuming '9.17' -> '2025-09-17' 
+    if '날짜' in df.columns:
+        df['날짜'] = '2025-' + df['날짜'].astype(str).str.replace('.', '-', regex=False)
+    
+    # 2. Type & Amount logic
+    # Stocks -> 매수, Amount=매수금액
+    # Cash (원화/달러) -> 입금, Amount=매수금액 
+    
+    cols = ['날짜', '소유자', '계좌', '종목', '거래구분', '통화', '거래금액', '수량', '비고']
+    
+    if '종목' in df.columns:
+        df['거래구분'] = df['종목'].apply(lambda x: '입금' if str(x).strip() in ['원화', '달러'] else '매수')
+    else:
+        df['거래구분'] = '매수' # Fallback
+        
+    df['비고'] = '기초자산' # Note to identify origin
+    if '매수금액' in df.columns:
+        df.rename(columns={'매수금액': '거래금액'}, inplace=True)
+    
+    # Ensure all cols exist
+    for c in cols:
+        if c not in df.columns:
+            df[c] = None
+            
+    return df[cols]
+
 import concurrent.futures
 
 from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
@@ -65,6 +104,7 @@ def load_data():
             f_master = executor.submit(_fetch, "01_계좌마스터", "10m", 0)
             f_asset_master = executor.submit(_fetch, "02_종목마스터", "10m", 0)
             f_temp = executor.submit(_fetch, "자산기록_TEMP", "0", 0)
+            f_initial_balance = executor.submit(_fetch, "2025년9월_자산종합", "0", 0)
 
             # Wait for results & Process
             # 1. History
@@ -97,12 +137,24 @@ def load_data():
             except Exception:
                 df_temp_history = pd.DataFrame()
 
+            # 8. Initial Balance (New logic)
+            try:
+                df_initial = f_initial_balance.result()
+                df_initial = _clean_initial_balance(df_initial)
+            except Exception as e:
+                st.warning(f"Initial Balance Load Error: {e}. Proceeding without initial balance.")
+                df_initial = pd.DataFrame()
+            
+            # Merge Initial Balance into Transactions
+            if not df_initial.empty:
+                df_txn = pd.concat([df_initial, df_txn], ignore_index=True)
+
         return {
             "history": df_history,
             "cagr": df_cagr,
             "inventory": df_inventory,
             "beta_plan": df_beta,
-            "transactions": df_txn,
+            "transactions": df_txn, # This now includes initial balance
             "account_master": df_master,
             "asset_master": df_asset_master,
             "temp_history": df_temp_history
@@ -297,10 +349,11 @@ def _generate_hash(row):
     NOTE: 'note' is explicitly EXCLUDED to allow 'Pending' -> 'Settled' updates.
     """
     # Normalize strings (strip) and numbers (float)
-    # Row keys match GSheet columns: '날짜', '계좌', '종목', '거래구분', '거래금액', '수량'
-    # Mapped to DB cols: date, account_name, asset_name, type, amount, qty
+    # Row keys match GSheet columns: '날짜', '계좌', '종목', '거래구분', '거래금액', '수량', '소유자'
+    # Mapped to DB cols: date, account_name, asset_name, type, amount, qty, owner
     
     unique_str = f"{str(row.get('날짜', '')).strip()}_" \
+                 f"{str(row.get('소유자', '')).strip()}_" \
                  f"{str(row.get('계좌', '')).strip()}_" \
                  f"{str(row.get('종목', '')).strip()}_" \
                  f"{str(row.get('거래구분', '')).strip()}_" \
@@ -337,10 +390,9 @@ def _sync_masters(cursor, df_acct, df_asset):
     """
     Upserts master data.
     """
+    # ... (No changes here)
     # Account Master
     if df_acct is not None and not df_acct.empty:
-        # Expected Cols: 계좌번호, 소유자, 계좌명, 증권사(Optional), 계좌구분(Optional)
-        # DB Cols: account_number, owner, account_name, broker, type
         for _, row in df_acct.iterrows():
             cursor.execute("""
                 INSERT OR REPLACE INTO account_master (account_number, owner, account_name, broker, type)
@@ -350,29 +402,14 @@ def _sync_masters(cursor, df_acct, df_asset):
                 str(row.get('소유자', '')).strip(),
                 str(row.get('계좌명', '')).strip(),
                 str(row.get('증권사', '')) if '증권사' in row else None,
-                str(row.get('계좌구분', '')) if '계좌구분' in row else None
+                # Fix: Column header is "포트폴리오 구분" in GSheet
+                str(row.get('포트폴리오 구분', row.get('계좌구분', ''))).strip() or None
             ))
             
     # Asset Master
     if df_asset is not None and not df_asset.empty:
-        # Expected Cols: 티커, 종목명, 통화, 자산구분
-        # DB Cols: ticker, asset_name, currency, asset_class
         for _, row in df_asset.iterrows():
-            cursor.execute("""
-                INSERT OR REPLACE INTO asset_master (ticker, asset_name, currency, asset_class)
-                VALUES (
-                    (SELECT ticker FROM asset_master WHERE asset_name = ?), -- Preserve existing Ticker if null? No, Master is source of truth.
-                    ?, ?, ?
-                )
-            """, ( # Actually REPLACE might change ID. Let's use INSERT OR REPLACE on Unique Name logic?
-                   # Since ID is Autoincrement, REPLACE deletes old row (and ID). 
-                   # It's safer to Upsert by Name.
-                   # But SQLite UPSERT requires ON CONFLICT.
-                   # Let's simplify: Just REPLACE based on Name?
-                   # Name is UNIQUE.
-                   pass
-            ))
-            # Retry with proper UPSERT syntax
+            # Retry with proper UPSERT syntax (Optimized)
             cursor.execute("""
                 INSERT INTO asset_master (ticker, asset_name, currency, asset_class)
                 VALUES (?, ?, ?, ?)
@@ -385,7 +422,7 @@ def _sync_masters(cursor, df_acct, df_asset):
                 str(row.get('티커', '')).strip(),
                 str(row.get('종목명', '')).strip(),
                 str(row.get('통화', 'KRW')).strip(),
-                str(row.get('자산구분', 'Stock')).strip()
+                'Cash' if str(row.get('종목명', '')).strip() in ['원화', '달러'] else 'Stock'
             ))
 
 def _sync_transactions(cursor, df_txn):
@@ -410,32 +447,24 @@ def _sync_transactions(cursor, df_txn):
             continue
             
         try:
-            # Insert or Update (if Pending -> Settled change happens, hash is SAME? NO wait.)
-            # If 'note' changes, does hash change?
-            # User requirement: 'Note' excluded from Hash.
-            # So if Hash X exists with note='Pending', and now we have Hash X with note='Settled'.
-            # INSERT OR REPLACE will update the row (Hash collision).
-            
             cursor.execute("""
                 INSERT INTO transaction_log (
-                    date, account_name, asset_name, type, amount, qty, price, currency, note,
+                    date, owner, account_name, asset_name, type, amount, qty, price, currency, note,
                     source_row_index, sync_hash
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(sync_hash) DO UPDATE SET
                     note = excluded.note,
                     source_row_index = excluded.source_row_index,
                     synced_at = CURRENT_TIMESTAMP
             """, (
                 r_date,
+                str(row.get('소유자', '')).strip(),
                 str(row.get('계좌', '')).strip(),
                 str(row.get('종목', '')).strip(),
                 str(row.get('거래구분', '')).strip(),
                 float(row.get('거래금액', 0)),
                 float(row.get('수량', 0)),
-                0.0, # Price is not reliable in log, usually derived. Or we can calc? amount/qty?
-                # Actually log doesn't have explicit 'Price' column usually? 
-                # Let's check GSheet. Yes, no explicit Price col in '00_거래일지' usually. But app logic might need it.
-                # Just store 0 or calc.
+                0.0, 
                 str(row.get('통화', 'KRW')).strip(),
                 str(row.get('비고', '')).strip(),
                 idx + 2, # Approx row number (header+1)

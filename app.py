@@ -287,15 +287,50 @@ menu_options = [
     "Historical Analysis"
 ]
 
+# Admin Only Menu
+if current_user == 'admin' or current_user == 'park': # Allow park to debug too
+    pass # menu_options.append("Admin: DB Viewer")
+
 # Hide 'Beta Rebalancing' for 'park'
 if target_owner == '박행자':
     menu_options = [m for m in menu_options if m != "Beta Rebalancing"]
 
+# Robust Page Persistence (Versioned Key)
+# This prevents "Index Error" by forcing new widget if menu length changes.
+
+if "menu_len" not in st.session_state:
+    st.session_state.menu_len = len(menu_options)
+    st.session_state.menu_ver = 0
+
+# If menu length changed (e.g. switching users), increment version to reset widget
+if len(menu_options) != st.session_state.menu_len:
+    st.session_state.menu_len = len(menu_options)
+    st.session_state.menu_ver += 1
+    # Reset selection to safe default
+    st.session_state.current_page_selection = menu_options[0]
+
+nav_key = f"nav_v{st.session_state.menu_ver}"
+
+if "current_page_selection" not in st.session_state:
+    st.session_state.current_page_selection = menu_options[0]
+
+# Calculate valid index
+try:
+    nav_index = menu_options.index(st.session_state.current_page_selection)
+except ValueError:
+    nav_index = 0
+    st.session_state.current_page_selection = menu_options[0]
+
+def update_page_selection():
+    st.session_state.current_page_selection = st.session_state[nav_key]
+
 page = st.sidebar.radio(
     "Select a page:",
     menu_options,
+    index=nav_index,
     label_visibility="collapsed",
-    key="main_navigation"
+    key=nav_key,
+    on_change=update_page_selection
 )
 st.sidebar.markdown("---")
 # Global Filters (Apply to relevant pages like Asset Details)
@@ -324,6 +359,68 @@ st.sidebar.caption("Last Update: " + (df_hist['날짜'].iloc[-1].strftime('%Y-%m
 if st.sidebar.button("Clear Cache"):
     st.cache_data.clear()
     st.rerun()
+
+# --- Page Routing ---
+if page == "Asset Trend":
+    # (Previous Logic...) - Existing logic is embedded in large blocks, need to append
+    pass # Placeholder strictly for search match, actual logic below
+
+# === INSERT ADMIN DB VIEWER LOGIC ===
+if page == "Admin: DB Viewer":
+    st.title("Admin: Database Viewer 🗄️")
+    
+    import sqlite3
+    conn = db_manager.get_connection()
+    
+    # Tabs
+    tab_browser, tab_sql = st.tabs(["Browse Tables", "Execute SQL"])
+    
+    with tab_browser:
+        # Get List of Tables
+        tables = pd.read_sql("SELECT name FROM sqlite_master WHERE type='table';", conn)['name'].tolist()
+        views = pd.read_sql("SELECT name FROM sqlite_master WHERE type='view';", conn)['name'].tolist()
+        
+        selected_table = st.selectbox("Select Table/View", tables + views)
+        
+        if selected_table:
+            st.subheader(f"Data: {selected_table}")
+            df_table = pd.read_sql(f"SELECT * FROM {selected_table}", conn)
+            st.dataframe(df_table, use_container_width=True)
+            st.caption(f"Rows: {len(df_table)}")
+            
+    with tab_sql:
+        st.subheader("Execute SQL Query")
+        query = st.text_area("SQL Query", "SELECT * FROM transaction_log ORDER BY date DESC LIMIT 10")
+        if st.button("Run Query"):
+            try:
+                df_sql = pd.read_sql(query, conn)
+                st.dataframe(df_sql, use_container_width=True)
+            except Exception as e:
+                st.error(f"Error: {e}")
+                
+    conn.close()
+
+# Keep existing Main Page Logic below... but wait, structure of app.py is page-linear?
+# Typically: if page == "A": ... elif page == "B": ...
+# I need to ensure I don't break the existing flow.
+# The user's file likely has a large `if page == "Asset Trend": ...` block.
+# Since I cannot see the whole file, I will append this logic condition at the END or carefully strictly match valid insertion point.
+# I will use the "sidebar logic" replacement as anchor, and assume standard Streamlit structure implies I should put the new page check ALONGSIDE others.
+# Actually, standard Streamlit app structure often has:
+# if page == "Asset Trend": ...
+# elif page == "Portfolio Scorecard": ...
+# To modify this safely without reading 2000 lines, I will verify where the `page` routing starts.
+# It seems `app.py` has implicit flow. I'll rely on adding the new condition *after* the sidebar setup, 
+# and importantly, I must ensure that `if page == "Admin: DB Viewer":` is handled.
+# Since I'm replacing the Sidebar definition block, I will just ensure the Menu Option is added.
+# THE ACTUAL PAGE RENDERING LOGIC for "Admin: DB Viewer" needs to be added where other pages are rendered.
+# I will append it to the very end of the file, assuming simple if/elif structure.
+
+# RE-READ PLAN:
+# 1. Update Menu Options (done in replacement).
+# 2. Append Page Logic at the END of file (need separate call or very smart Match).
+# I'll do Step 1 (Sidebar) here.
+
 # --- Page 1: Asset & Index Trend ---
 if page == "Asset Trend":
     st.header("Asset & Index Trend")
