@@ -4,17 +4,23 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
 from modules import data_loader, ai_parser
-import modules.db_manager as db_manager
+from modules import db_manager, migration, database, models, sync_manager
 import modules.d3_treemap as d3_treemap
 
-# Initialize DB
-db_manager.init_db()
-# --- Page Config ---
+# --- Page Config (Must be First) ---
 st.set_page_config(
     page_title="가족 자산 대시보드",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
+
+# Initialize DB (Old & New)
+db_manager.init_db() 
+database.initialize_sqlite_db() # New SQLAlchemy Init
+
+# Auto-Sync on Startup (Stage 2)
+with st.spinner("Checking for latest data..."):
+    sync_manager.auto_sync()
 # --- Password Protection ---
 # --- Password Protection (Streamlit Authenticator) ---
 import streamlit_authenticator as stauth
@@ -23,78 +29,65 @@ from yaml.loader import SafeLoader
 
 def run_authentication():
     # 1. Get Password from Secrets
-    plain_password = st.secrets["general"]["password"]
-    
-    # 2. Hash the password (Runtime hashing - okay for single user)
-    # Note: efficient enough for single user startup
-    hashed_passwords = [stauth.Hasher().hash(plain_password)]
-    
-    # 3. Create Config Dictionary
-    config = {
-        'credentials': {
-            'usernames': {
-                'admin': {
-                    'name': 'Admin',
-                    'password': hashed_passwords[0]
-                },
-                'park': { # Added User 'park'
-                    'name': '박행자',
-                    'password': hashed_passwords[0] # Using same password for now
+    try:
+        # Construct config dictionary from secrets
+        config = {
+            'credentials': {
+                'usernames': {
+                    user: {
+                        'email': data['email'],
+                        'name': data['name'],
+                        'password': data['password']
+                        # 'logged_in': False # Optional
+                    }
+                    for user, data in st.secrets['credentials']['usernames'].items()
                 }
-            }
-        },
-        'cookie': {
-            'expiry_days': 1,
-            'key': 'asset_dashboard_signature_key', # Random string
-            'name': 'asset_dashboard_cookie'
-        },
-        'pre-authorized': {'emails': []}
-    }
-    
-    # 4. Initialize Authenticator
-    authenticator = stauth.Authenticate(
-        config['credentials'],
-        config['cookie']['name'],
-        config['cookie']['key'],
-        config['cookie']['expiry_days'],
-        # preheaders deprecated in some versions, simpler usage:
-    )
-    
-    # 5. Login Widget
-    # Custom widget location: center of screen (main)
-    # location='main' (default)
-    login_result = authenticator.login(location="main")
-    
-    if login_result:
-        name, authentication_status, username = login_result
-    else:
-        # Fallback if login returns None (initial state or pending)
-        name = st.session_state.get('name')
-        authentication_status = st.session_state.get('authentication_status')
-        username = st.session_state.get('username')
-    
-    if authentication_status:
-        # Success
-        return authenticator
-    elif authentication_status is False:
-        st.error('Username/password is incorrect')
+            },
+            'cookie': {
+                'expiry_days': 30, # Increased to 30 days
+                'key': 'asset_dashboard_signature_key', 
+                'name': 'asset_dashboard_cookie'
+            },
+            'pre-authorized': {'emails': []}
+        }
+    except Exception as e:
+        st.error(f"Error loading secrets: {e}")
         st.stop()
-    elif authentication_status is None:
-        st.warning('Please enter your username and password')
-        st.stop()
+    
+    # 2. Get Authenticator via Manager
+    authenticator = auth_manager.get_authenticator(config)
+    
+    # 3. Silent Login Check (Check Cookie)
+    # Most stauth versions automatically check cookie on init and set session_state['authentication_status']
+    
+    # 4. Conditional Login Widget
+    if st.session_state.get("authentication_status") is None or st.session_state.get("authentication_status") is False:
+        # Show Login Widget only if not logged in
+        auth_manager.login_widget(authenticator)
         
-    return None
+    return authenticator
 
 # Execution
 authenticator = run_authentication()
-if not st.session_state.get("authentication_status"):
+
+# Handle Status
+if st.session_state.get("authentication_status"):
+    # Logged In
+    current_user = st.session_state.get('username')
+    target_owner = st.secrets['credentials']['usernames'][current_user]['name']
+    
+    # Logout Button in Sidebar
+    with st.sidebar:
+        auth_manager.logout_widget(authenticator)
+        st.write(f"Welcome, {st.session_state.get('name')}!")
+        
+elif st.session_state.get("authentication_status") is False:
+    st.error('Username/password is incorrect')
+    st.stop()
+elif st.session_state.get("authentication_status") is None:
+    st.warning('Please enter your username and password')
     st.stop()
 
-# Logout Button in Sidebar (Optional but good practice)
-with st.sidebar:
-    authenticator.logout('Logout', 'main')
-
-# --- Styling ---
 # --- Styling ---
 st.markdown("""
 <style>
@@ -303,13 +296,19 @@ if "menu_len" not in st.session_state:
     st.session_state.menu_ver = 0
 
 # If menu length changed (e.g. switching users), increment version to reset widget
-if len(menu_options) != st.session_state.menu_len:
+# If menu length or content changed, reset widget
+current_menu_hash = hash(tuple(menu_options))
+if "menu_hash" not in st.session_state:
+    st.session_state.menu_hash = current_menu_hash
+
+if len(menu_options) != st.session_state.menu_len or current_menu_hash != st.session_state.menu_hash:
     st.session_state.menu_len = len(menu_options)
+    st.session_state.menu_hash = current_menu_hash
     st.session_state.menu_ver += 1
     # Reset selection to safe default
     st.session_state.current_page_selection = menu_options[0]
 
-nav_key = f"nav_v{st.session_state.menu_ver}"
+nav_key = f"nav_v{st.session_state.menu_ver}_{current_menu_hash}"
 
 if "current_page_selection" not in st.session_state:
     st.session_state.current_page_selection = menu_options[0]
@@ -337,17 +336,20 @@ st.sidebar.markdown("---")
 selected_owners = []
 if page == "Asset Details" and owners_list:
     st.sidebar.subheader("Filters")
-    selected_owners = st.sidebar.multiselect("Owners", owners_list, default=owners_list)
+    # Dynamic Key for Filter to prevent "Bad setIn index"
+    owner_filter_key = f"filter_owner_{hash(tuple(owners_list))}"
+    selected_owners = st.sidebar.multiselect("Owners", owners_list, default=owners_list, key=owner_filter_key)
 
-# --- DB Sync Control ---
+# --- DB Sync Control (SQLAlchemy Version) ---
 st.sidebar.markdown("---")
-if st.sidebar.button("🔄 Sync Database"):
-    with st.sidebar.status("Syncing to SQLite...", expanded=True) as status:
+if st.sidebar.button("🔄 Sync Database (v2)"):
+    with st.sidebar.status("Syncing to SQLite (SQLAlchemy)...", expanded=True) as status:
         st.write("Fetching GSheet Data...")
-        # Force fresh fetch
-        fresh_data = data_loader.load_data() 
-        st.write("Updating DB...")
-        success, msg = data_loader.sync_to_sqlite(fresh_data)
+        # Force fresh fetch logic is inside migration usually, or we pass fresh data
+        # Migration script V1 handles loading.
+        
+        st.write("Migrating Data...")
+        success, msg = migration.migrate_google_sheets_to_sqlite()
         if success:
             status.update(label="Sync Complete!", state="complete", expanded=False)
             st.sidebar.success(msg)
@@ -355,7 +357,11 @@ if st.sidebar.button("🔄 Sync Database"):
             status.update(label="Sync Failed", state="error")
             st.sidebar.error(msg)
 st.sidebar.markdown("---")
-st.sidebar.caption("Last Update: " + (df_hist['날짜'].iloc[-1].strftime('%Y-%m-%d') if not df_hist.empty else "N/A"))
+# Status Indicators
+last_sync = st.session_state.get('last_sync_time', 'Not Run')
+st.sidebar.caption(f"✅ DB Auto-Sync: {last_sync}")
+st.sidebar.caption("Last Data Date: " + (df_hist['날짜'].iloc[-1].strftime('%Y-%m-%d') if not df_hist.empty else "N/A"))
+
 if st.sidebar.button("Clear Cache"):
     st.cache_data.clear()
     st.rerun()

@@ -8,3 +8,4 @@ openpyxl
 yfinance
 streamlit-authenticator
 google-generativeai
+sqlalchemy
