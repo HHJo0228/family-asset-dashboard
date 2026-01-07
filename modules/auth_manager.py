@@ -56,8 +56,11 @@ def login_widget(authenticator):
     """
     Renders the login widget and handles the result.
     """
-    name, authentication_status, username = authenticator.login(location="main")
-    return name, authentication_status, username
+    result = authenticator.login(location="main")
+    if result:
+        name, authentication_status, username = result
+        return name, authentication_status, username
+    return None, None, None
 
 def logout_widget(authenticator):
     """

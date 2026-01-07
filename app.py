@@ -4,7 +4,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
 from modules import data_loader, ai_parser
-from modules import db_manager, migration, database, models, sync_manager
+from modules import db_manager, migration, database, models, sync_manager, auth_manager
 import modules.d3_treemap as d3_treemap
 
 # --- Page Config (Must be First) ---
@@ -30,31 +30,39 @@ from yaml.loader import SafeLoader
 def run_authentication():
     # 1. Get Password from Secrets
     try:
-        # Construct config dictionary from secrets
-        config = {
-            'credentials': {
-                'usernames': {
-                    user: {
-                        'email': data['email'],
-                        'name': data['name'],
-                        'password': data['password']
-                        # 'logged_in': False # Optional
-                    }
-                    for user, data in st.secrets['credentials']['usernames'].items()
-                }
-            },
-            'cookie': {
-                'expiry_days': 30, # Increased to 30 days
-                'key': 'asset_dashboard_signature_key', 
-                'name': 'asset_dashboard_cookie'
-            },
-            'pre-authorized': {'emails': []}
-        }
-    except Exception as e:
-        st.error(f"Error loading secrets: {e}")
+        plain_password = st.secrets["general"]["password"]
+    except KeyError:
+        st.error("Secrets 'general.password' not found.")
         st.stop()
+        
+    # 2. Hash the password (Runtime hashing)
+    hashed_passwords = [stauth.Hasher().hash(plain_password)]
     
-    # 2. Get Authenticator via Manager
+    # 3. Construct Config Dictionary (Programmatic)
+    config = {
+        'credentials': {
+            'usernames': {
+                'admin': {
+                    'name': 'Admin',
+                    'password': hashed_passwords[0],
+                    'email': 'admin@example.com' 
+                },
+                'park': { 
+                    'name': '박행자',
+                    'password': hashed_passwords[0],
+                    'email': 'park@example.com'
+                }
+            }
+        },
+        'cookie': {
+            'expiry_days': 30, # Persist for 30 days
+            'key': 'asset_dashboard_signature_key', 
+            'name': 'asset_dashboard_auth'
+        },
+        'pre-authorized': {'emails': []}
+    }
+    
+    # 4. Get Authenticator via Manager
     authenticator = auth_manager.get_authenticator(config)
     
     # 3. Silent Login Check (Check Cookie)
@@ -65,16 +73,20 @@ def run_authentication():
         # Show Login Widget only if not logged in
         auth_manager.login_widget(authenticator)
         
-    return authenticator
+    return authenticator, config
 
 # Execution
-authenticator = run_authentication()
+authenticator, auth_config = run_authentication()
 
 # Handle Status
 if st.session_state.get("authentication_status"):
     # Logged In
     current_user = st.session_state.get('username')
-    target_owner = st.secrets['credentials']['usernames'][current_user]['name']
+    try:
+        # Lookup name from the config object we created
+        target_owner = auth_config['credentials']['usernames'][current_user]['name']
+    except KeyError:
+        target_owner = "Unknown"
     
     # Logout Button in Sidebar
     with st.sidebar:
@@ -342,7 +354,7 @@ if page == "Asset Details" and owners_list:
 
 # --- DB Sync Control (SQLAlchemy Version) ---
 st.sidebar.markdown("---")
-if st.sidebar.button("🔄 Sync Database (v2)"):
+if st.sidebar.button("🔄 Sync Database (v2)", key="btn_sync_db"):
     with st.sidebar.status("Syncing to SQLite (SQLAlchemy)...", expanded=True) as status:
         st.write("Fetching GSheet Data...")
         # Force fresh fetch logic is inside migration usually, or we pass fresh data
@@ -362,7 +374,7 @@ last_sync = st.session_state.get('last_sync_time', 'Not Run')
 st.sidebar.caption(f"✅ DB Auto-Sync: {last_sync}")
 st.sidebar.caption("Last Data Date: " + (df_hist['날짜'].iloc[-1].strftime('%Y-%m-%d') if not df_hist.empty else "N/A"))
 
-if st.sidebar.button("Clear Cache"):
+if st.sidebar.button("Clear Cache", key="btn_clear_cache"):
     st.cache_data.clear()
     st.rerun()
 
