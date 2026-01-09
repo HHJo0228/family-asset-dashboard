@@ -27,8 +27,10 @@ def migrate_google_sheets_to_sqlite():
     2. Sync Masters (Account/Asset).
     3. Sync Transactions.
     """
-    # 1. Init DB
+    # 1. Init DB (Ensure Views exist)
     database.initialize_sqlite_db()
+    from modules import db_manager
+    db_manager.init_db() # Force create Views (view_asset_inventory)
     
     # 2. Fetch Data
     print("Fetching data from Google Sheets...")
@@ -127,6 +129,60 @@ def migrate_google_sheets_to_sqlite():
                 
                 db.add(txn)
         
+        # 6. Sync History Snapshot
+        df_hist = data.get('history')
+        _sync_history(db, df_hist)
+
+        # 7. Sync Inventory Snapshot (Baseline)
+        # CRITICAL FIX: We must load this from the SOURCE (GSheet/Data Loader), NOT from the View.
+        # Calculating from View (which sums Snapshot + Log) and writing back to Snapshot creates an infinite loop.
+        # This table represents the STATIC BASELINE (e.g. Sept 2025).
+        
+        df_inv_source = data.get('inventory')
+        
+        if True: # Force Skip for Safety
+            print("Skipping Source Inventory Sync to prevent duplication.")
+            print("Note: Initial Balance is already merged into Transaction Log.")
+            _sync_inventory(db, pd.DataFrame())
+        elif df_inv_source is not None and not df_inv_source.empty:
+            # We need to map GSheet columns to DB Schema columns if they differ.
+            # Usually data_loader returns GSheet column names.
+            # DB Schema (InventorySnapshot): owner, account_name, asset_name, ticker, qty, price, amount, dividend, realized, currency, asset_class
+            
+            # Use _sync_inventory directly, assuming data_loader format is compatible with what _sync_inventory expects.
+            # _sync_inventory expects: '소유자', '계좌', '종목', '티커', '수량', '평단가', '평가금액', '배당수익', '확정손익', '통화', '자산구분'
+            
+            # Note: GSheet usually has '매입금액' for Amount. '평가금액' is calculated.
+            # Adjust column mapping if necessary.
+            # Previous code mapped 'net_book_value_amount' -> '평가금액' -> 'amount'.
+            # Here we expect '매입금액' from GSheet to be mapped to 'amount'.
+            
+            # Let's verify standard GSheet columns:
+            # 소유자, 계좌, 종목, 티커, 포트폴리오 구분, 화폐, 보유주수(수량), 평단가, 현재가, 매입금액, 평가금액...
+            
+            # Ensure critical columns exist or rename
+            rename_map = {
+                '보유주수': '수량',
+                '매입금액': '평가금액', # In DB 'amount' is mapped from '평가금액' in _sync logic? 
+                                     # Let's check _sync_inventory (Line 307: amount=float(row.get('평가금액', 0))).
+                                     # Wait, 'amount' should represent BOOK VALUE (Invested) or CURRENT VALUE?
+                                     # In Snapshot, it's usually Book Value.
+                                     # If GSheet has '매입금액', we should map it to '평가금액' key for _sync_inventory to pick it up?
+                                     # That's confusing. Let's fix _sync_inventory input expectation or map here.
+                '화폐': '통화'
+            }
+            df_inv_source.rename(columns=rename_map, inplace=True)
+            
+            # If '평가금액' is missing but '매입금액' exists (common in GSheet raw data), use '매입금액'.
+            # We want 'amount' in DB to be Invested Amount.
+            if '평가금액' not in df_inv_source.columns and '매입금액' in df_inv_source.columns:
+                 df_inv_source['평가금액'] = df_inv_source['매입금액']
+
+            _sync_inventory(db, df_inv_source)
+        else:
+            print("Warning: Source Inventory is empty. Clearing Snapshot.")
+            _sync_inventory(db, pd.DataFrame())
+
         db.commit()
         print("Migration complete.")
         return True, "Migration successful."
@@ -137,3 +193,90 @@ def migrate_google_sheets_to_sqlite():
         return False, f"Error: {e}"
     finally:
         db.close()
+
+def _sync_history(db: Session, df: pd.DataFrame):
+    """
+    Syncs the History DataFrame to HistorySnapshot table.
+    Strategy: Full Replace (Snapshot) for simplicity and consistency.
+    """
+    if df is None or df.empty:
+        return
+
+    try:
+        # 1. Clear existing snapshots
+        db.query(models.HistorySnapshot).delete()
+        
+        # 2. Transform to Long Format
+        # df columns: '날짜', '요일', 'Total', 'OwnerA', ...
+        # Exclude '요일' if present
+        id_vars = ['날짜']
+        value_vars = [c for c in df.columns if c not in ['날짜', '요일']]
+        
+        df_melted = df.melt(id_vars=id_vars, value_vars=value_vars, var_name='key', value_name='value')
+        
+        # 3. Bulk Insert
+        # Prepare objects
+        objects = []
+        for _, row in df_melted.iterrows():
+            date_val = row['날짜']
+            if pd.isna(date_val): continue
+            
+            # Ensure date object
+            if isinstance(date_val, pd.Timestamp):
+                date_val = date_val.date()
+                
+            objects.append(models.HistorySnapshot(
+                date=date_val,
+                key=str(row['key']),
+                value=float(row['value']) if pd.notnull(row['value']) else 0.0,
+                updated_at=datetime.utcnow()
+            ))
+            
+        # Optimize: Use bulk_save_objects
+        db.bulk_save_objects(objects)
+        print(f"Synced {len(objects)} history points.")
+        
+    except Exception as e:
+        print(f"History Sync Error: {e}")
+        # Non-critical, just log
+
+def _sync_inventory(db: Session, df: pd.DataFrame):
+    """
+    Syncs the Inventory DataFrame to InventorySnapshot table.
+    Strategy: Full Replace (Snapshot).
+    """
+    if df is None or df.empty:
+        return
+
+    try:
+        # 1. Clear existing
+        db.query(models.InventorySnapshot).delete()
+        
+        # 2. Insert
+        objects = []
+        for _, row in df.iterrows():
+            objects.append(models.InventorySnapshot(
+                owner=str(row.get('소유자', '')).strip(),
+                account_name=str(row.get('계좌', '')).strip(),
+                asset_name=str(row.get('종목', '')).strip(),
+                ticker=str(row.get('티커', '')).strip() if '티커' in row else None,
+                
+                qty=float(row.get('수량', 0)),
+                price=float(row.get('평단가', 0)), # Avg Price
+                amount=float(row.get('평가금액', 0)), # Invested Amount
+                
+                dividend=float(row.get('배당수익', 0)),
+                realized=float(row.get('확정손익', 0)),
+                
+                currency=str(row.get('통화', 'KRW')).strip(),
+                asset_class=str(row.get('자산구분', '')).strip(),
+                
+                updated_at=datetime.utcnow()
+            ))
+            
+        db.bulk_save_objects(objects)
+        print(f"Synced {len(objects)} inventory items.")
+        
+    except Exception as e:
+        print(f"Inventory Sync Error: {e}")
+

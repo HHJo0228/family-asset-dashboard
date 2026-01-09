@@ -4,8 +4,9 @@ from sqlalchemy.orm import sessionmaker
 from modules.models import Base
 import os
 
-DB_FILE = "assets.db"
+DB_FILE = os.path.join(os.getcwd(), "assets.db")
 DATABASE_URL = f"sqlite:///{DB_FILE}"
+print(f"DEBUG: database.py using DB at {DB_FILE}")
 
 @st.cache_resource
 def get_engine():

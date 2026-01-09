@@ -28,11 +28,13 @@ def _clean_initial_balance(df):
     cols = ['날짜', '소유자', '계좌', '종목', '거래구분', '통화', '거래금액', '수량', '비고']
     
     if '종목' in df.columns:
-        df['거래구분'] = df['종목'].apply(lambda x: '입금' if str(x).strip() in ['원화', '달러'] else '매수')
+        # Stock -> '초기' (Initial Baseline - No Cash Impact)
+        # Cash -> '입금' (Initial Cash Deposit)
+        df['거래구분'] = df['종목'].apply(lambda x: '입금' if str(x).strip() in ['원화', '달러'] else '초기')
     else:
-        df['거래구분'] = '매수' # Fallback
+        df['거래구분'] = '초기' # Fallback
         
-    df['비고'] = '기초자산' # Note to identify origin
+    df['비고'] = '초기자산' # Note to identify origin
     if '매수금액' in df.columns:
         df.rename(columns={'매수금액': '거래금액'}, inplace=True)
     

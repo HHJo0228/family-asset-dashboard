@@ -1,26 +1,54 @@
 import streamlit as st
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-from datetime import datetime
-from modules import data_loader, ai_parser
-from modules import db_manager, migration, database, models, sync_manager, auth_manager
-import modules.d3_treemap as d3_treemap
 
-# --- Page Config (Must be First) ---
+# --- Page Config (Must be First Streamlit Call) ---
 st.set_page_config(
     page_title="가족 자산 대시보드",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# Initialize DB (Old & New)
-db_manager.init_db() 
-database.initialize_sqlite_db() # New SQLAlchemy Init
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from datetime import datetime
+from modules import data_loader, ai_parser
+from modules import db_manager, migration, database, models, sync_manager, auth_manager, db_loader
+import modules.d3_treemap as d3_treemap
 
-# Auto-Sync on Startup (Stage 2)
-with st.spinner("Checking for latest data..."):
-    sync_manager.auto_sync()
+# === INITIALIZE DATABASE ===
+# Always ensure tables exist (Fast, Idempotent)
+database.initialize_sqlite_db()
+
+# Initialize DB tables if not exist (Legacy & Sync Check)
+if 'db_initialized' not in st.session_state:
+    db_manager.init_db() # Legacy Init
+    
+    # DB initialization complete - auto-sync will run only if DB is empty (below)
+    st.session_state['db_initialized'] = True
+
+# --- Load Data (Local SQLite) ---
+data = db_loader.load_all_data_from_db()
+
+# Check for Empty Data (Fresh DB State)
+if data is None or data.get('history', pd.DataFrame()).empty:
+    with st.spinner("🚀 초기 데이터베이스 구축 중입니다... (약 5-10초 소요)"):
+        # Force Sync
+        try:
+            # Bypass 'data_synced' check by manually calling migration if needed, 
+            # but auto_sync handles most logic. We force the session flag reset.
+            if 'data_synced' in st.session_state:
+                del st.session_state['data_synced']
+            
+            sync_manager.auto_sync()
+            
+            st.success("데이터 준비 완료! 새로고침합니다.")
+            st.cache_data.clear() # Clear the 'empty' cache
+            st.rerun()
+        except Exception as e:
+            st.error(f"Auto-Sync Failed: {e}")
+            st.sidebar.button("Retry Sync", on_click=lambda: st.rerun())
+            st.stop()
+
 # --- Password Protection ---
 # --- Password Protection (Streamlit Authenticator) ---
 import streamlit_authenticator as stauth
@@ -144,8 +172,8 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
-# --- Load Data ---
-data = data_loader.load_data()
+# --- Load Data - Already loaded at top ---
+
 
 # --- Auth & Filtering Logic ---
 # Get current user
@@ -348,9 +376,22 @@ st.sidebar.markdown("---")
 selected_owners = []
 if page == "Asset Details" and owners_list:
     st.sidebar.subheader("Filters")
-    # Dynamic Key for Filter to prevent "Bad setIn index"
-    owner_filter_key = f"filter_owner_{hash(tuple(owners_list))}"
-    selected_owners = st.sidebar.multiselect("Owners", owners_list, default=owners_list, key=owner_filter_key)
+    # Ensure default values are valid (subset of options)
+    # Use a static key to prevent "Bad setIn index" errors caused by widget ID changes.
+    # But we must validate defaults manually if data changes.
+    default_owners = owners_list
+    if "sidebar_owner_filter" in st.session_state:
+            # Keep previous selection if valid
+            prev = st.session_state.sidebar_owner_filter
+            default_owners = [o for o in prev if o in owners_list]
+            if not default_owners: default_owners = owners_list
+
+    selected_owners = st.sidebar.multiselect(
+        "Owners", 
+        owners_list, 
+        default=default_owners, 
+        key="sidebar_owner_filter"
+    )
 
 # --- DB Sync Control (SQLAlchemy Version) ---
 st.sidebar.markdown("---")
@@ -365,6 +406,9 @@ if st.sidebar.button("🔄 Sync Database (v2)", key="btn_sync_db"):
         if success:
             status.update(label="Sync Complete!", state="complete", expanded=False)
             st.sidebar.success(msg)
+            # Clear Cache and Rerun to load new data immediately
+            st.cache_data.clear()
+            st.rerun()
         else:
             status.update(label="Sync Failed", state="error")
             st.sidebar.error(msg)
@@ -535,11 +579,10 @@ elif page == "Portfolio Scorecard":
     st.caption("Detailed breakdown by portfolio")
     
     st.divider()
-    
-
 
     # Access Data
-    df_temp = data.get("temp_history")
+    # df_temp = data.get("temp_history") # LEGACY REMOVED
+    df_inv_source = data.get('inventory')
     df_hist_local = df_hist.copy() if not df_hist.empty else None
 
     # Standard Streamlit Layout for Scorecard
@@ -547,23 +590,25 @@ elif page == "Portfolio Scorecard":
 
     for idx, port in enumerate(portfolios):
         with cols[idx]:
-            # 1. Get Current Value (from TEMP)
+            # 1. Get Current Value (from Inventory Aggregation)
             val = 0
             principal_val = 0
             
-            if df_temp is not None and not df_temp.empty:
-                # Filter by Portfolio Name
-                # Assuming '포트폴리오' column exists as per User Request context
-                # "자산기록_TEMP 시트의 포트폴리오 별..."
-                target_port_col = next((c for c in df_temp.columns if '포트폴리오' in c), None)
-                if target_port_col:
-                    row = df_temp[df_temp[target_port_col] == port]
-                    if not row.empty:
-                        # Summing just in case multiple rows exist (though unlikely for Summary)
-                        if '평가금액' in row.columns:
-                            val = pd.to_numeric(row['평가금액'], errors='coerce').sum()
-                        if '투자원금' in row.columns:
-                            principal_val = pd.to_numeric(row['투자원금'], errors='coerce').sum()
+            if df_inv_source is not None and not df_inv_source.empty:
+                # Use '포트폴리오 구분' or '포트폴리오' mapped col
+                # db_loader maps 'type' -> '포트폴리오 구분'
+                # But let's check if we missed mapping in app.py logic before this page?
+                # This page is independent. We need to match '포트폴리오 구분'.
+                
+                # Filter by Portfolio
+                # DB Loader provided '포트폴리오 구분' column in df_inv
+                mask = df_inv_source['포트폴리오 구분'] == port
+                df_port_items = df_inv_source[mask]
+                
+                if not df_port_items.empty:
+                    # Sum KRW columns (Total Wealth)
+                    val = pd.to_numeric(df_port_items['평가금액'], errors='coerce').sum()
+                    principal_val = pd.to_numeric(df_port_items['매입금액'], errors='coerce').sum()
             
             # 2. Get Previous Day Value (Strictly Yesterday or Before)
             prev_val = 0
@@ -580,23 +625,10 @@ elif page == "Portfolio Scorecard":
                          # The last row of "Past" is the true Previous Day
                          if port in df_past.columns:
                              prev_val = df_past.iloc[-1][port]
-                     else:
-                         # Fallback: If no past data (very first day?), use last available?
-                         # Or 0? Let's use 0 to indicate N/A delta.
-                         pass
-                else:
-                    # Fallback if no date column (unlikely)
-                    if port in df_hist_local.columns:
-                         prev_val = df_hist_local.iloc[-1][port] 
             
             # Calculate DoD
             diff = val - prev_val
             pct = (diff / prev_val) if prev_val != 0 else 0
-            
-            # --- Fallback if TEMP is empty (to avoid zeros) ---
-            # If val is 0, maybe use History last row as current? 
-            # User explicitly asked for TEMP. If TEMP is empty/missing, 0 is correct or "N/A".
-            # But let's respect the source.
             
             # 3. Get CAGR
             cagr_val = None
@@ -640,151 +672,186 @@ elif page == "Portfolio Scorecard":
                 st.caption(" | ".join(sub_info))
     
     
-    # 5. Definitions Footnote (Using st.info for theme-adaptive visibility)
-
-    
+    # 5. Definitions Footnote
     st.divider()
-    
-    # 5. Definitions (Minimalist, Right-aligned, Small - Moved to Bottom)
     st.markdown("""
     <div style="text-align: right; color: #999999; font-size: 11px; margin-top: 5px;">
     Total Return: 배당/확정손익 제외, 매입 대비 평가수익률 &nbsp;|&nbsp; CAGR: '25.9.22 기준(100) 대비 연환산 상승률
     </div>
     """, unsafe_allow_html=True)
+
 # --- Page 3: Asset Inventory ---
 elif page == "Asset Details":
     # Custom Title to anchor the top of the page
     st.markdown("<h1 style='font-size: 2.5rem; margin-bottom: 30px;'>Asset Inventory Details</h1>", unsafe_allow_html=True)
     # 1. Prepare Data
     df_asset = data['inventory'].copy()
-    df_master = data['account_master'].copy()
-    # Ensure numeric types
-    num_cols = ['매입금액', '평가금액', '총평가손익']
-    for col in num_cols:
+    
+    # Ensure numeric types (Include Native Columns)
+    numeric_cols = ['보유주수', '평단가', '평가금액', '매입금액', '총평가손익', '현재가', 
+                   '현재가_Native', '평가금액_Native', '매입금액_Native', '총평가손익_Native', '배당수익', '확정손익']
+    for col in numeric_cols:
         if col in df_asset.columns:
             df_asset[col] = pd.to_numeric(df_asset[col], errors='coerce').fillna(0)
+            
     # 2. Use '포트폴리오 구분' directly (No Merge)
-    # User confirmed '포트폴리오 구분' exists in '자산종합' sheet.
     target_port_col = '포트폴리오 구분'
     if target_port_col in df_asset.columns:
         # Rename to standard '포트폴리오' for downstream consistency
         df_merged = df_asset.rename(columns={target_port_col: '포트폴리오'})
     else:
-        st.error(f"'{target_port_col}' 컬럼을 찾을 수 없습니다. (데이터 컬럼: {list(df_asset.columns)})")
+        st.error(f"'{target_port_col}' 컬럼을 찾을 수 없습니다.")
         st.stop()
-    # 3. Filter by Owner (if selected in Sidebar)
-    # Assumes '소유자' col exists in df_asset
+        
+    # 3. Filter by Owner
     if selected_owners and '소유자' in df_merged.columns:
         df_merged = df_merged[df_merged['소유자'].isin(selected_owners)]
-    # 4. Portfolio Filter (Added Widget)
+        
+    # 4. Portfolio Filter
     all_ports = sorted(df_merged['포트폴리오'].dropna().unique())
-    # Custom Sort if possible
     custom_order = ['쇼호 α', '쇼호 β', '조연재', '조이재', '박행자']
     all_ports.sort(key=lambda x: custom_order.index(x) if x in custom_order else 999)
     selected_portfolios = st.multiselect("Select Portfolios", all_ports, default=all_ports)
     if selected_portfolios:
         df_merged = df_merged[df_merged['포트폴리오'].isin(selected_portfolios)]
-    # 5. Filter out zero evaluation assets
-    df_merged = df_merged[df_merged['평가금액'] > 0]
-    # 6. GroupBy & Aggregate (The Pivot Step)
-    # Ensure numeric types for new columns
-    # User requested to use sheet columns for '평단가', '현재가'
-    extra_nums = ['보유주수', '배당수익', '확정손익', '평단가', '현재가']
-    for c in extra_nums:
-        if c in df_merged.columns:
-            df_merged[c] = pd.to_numeric(df_merged[c], errors='coerce').fillna(0)
-        else:
-            df_merged[c] = 0
-    # Group by [Portfolio, Ticker] -> Sum [Invested, Eval, Profit, Qty, Div, Realized]
-    # For Prices, we average them (assuming consistency per ticker).
+        
+    # 5. Filter out zero quantity (Show Debt/Negative Cash in Table, but handle nicely)
+    # Was: df_merged = df_merged[df_merged['평가금액'] > 0]
+    # New: Keep everything that is not effectively closed (Qty != 0)
+    df_merged = df_merged[df_merged['평가금액'] != 0] # Or Qty != 0?
+    # If price is missing, Value is 0 even if Qty!=0. 
+    # But we safeguarded price.
+    # Let's use Evaluated != 0 to exclude 0-balance items.
+    # Note: This KEEPS negative cash (Debt).
+    
+    # 6. Group by [Portfolio, Ticker] -> Sum/Avg aggregations
+    # Rename Columns to Match UI Expectations
+    # Check if '화폐' already exists (from price_fetcher). If so, drop '통화' to avoid duplicate '화폐' after rename.
+    if '화폐' in df_merged.columns and '통화' in df_merged.columns:
+        df_merged = df_merged.drop(columns=['통화'])
+    
+    rename_map_ui = {
+        '통화': '화폐',
+        '수량': '보유주수'
+    }
+    df_merged.rename(columns=rename_map_ui, inplace=True)
+    
+    # Fill missing columns defensive
+    for c in ['배당수익', '확정손익']:
+        if c not in df_merged.columns: df_merged[c] = 0
+
     df_pivot = df_merged.groupby(['포트폴리오', '종목'], as_index=False).agg({
         '매입금액': 'sum',
         '평가금액': 'sum',
         '총평가손익': 'sum',
+        '매입금액_Native': 'sum',
+        '평가금액_Native': 'sum',
+        '총평가손익_Native': 'sum',
         '보유주수': 'sum',
         '배당수익': 'sum',
         '확정손익': 'sum',
-        '평단가': 'mean', # User requested sheet column
-        '현재가': 'mean', # User requested sheet column
-        '화폐': 'first'   # NEW: Capture Currency
+        '평단가': 'mean', 
+        '현재가': 'mean', 
+        '현재가_Native': 'mean',
+        '화폐': 'first'   
     })
+    
     def get_currency_symbol(curr):
         s = str(curr).strip().upper()
         if s in ['USD', '달러', 'DOLLAR']: return '$'
         return '₩'
     df_pivot['CurSymbol'] = df_pivot['화폐'].apply(get_currency_symbol)
-    # 7. Calculate Derived Metrics (ReturnRate only)
-    # ReturnRate
+    
+    # 7. Calculate Derived Metrics (ReturnRate)
+    # Using KRW values for Ratio (Math is same)
     df_pivot['ReturnRate'] = 0.0
     mask_invest = df_pivot['매입금액'] != 0
     df_pivot.loc[mask_invest, 'ReturnRate'] = (df_pivot.loc[mask_invest, '평가금액'] / df_pivot.loc[mask_invest, '매입금액'] - 1) * 100
-    # Removed Manual AvgPrice/CurPrice Calc as per User Request
-    # Removed Manual AvgPrice/CurPrice Calc as per User Request
-    # 8. Render Treemaps & Tables
+
+    # 8. Render Treemaps
     unique_ports = sorted(df_pivot['포트폴리오'].unique())
-    # Re-sort using custom order
     unique_ports.sort(key=lambda x: custom_order.index(x) if x in custom_order else 999)
+    
     if not unique_ports:
         st.info("데이터가 없습니다.")
     else:
         for port in unique_ports:
             st.subheader(port)
-            df_p = df_pivot[df_pivot['포트폴리오'] == port].copy()
-            if df_p.empty:
+            # Filter for TREEMAP only (Must be > 0)
+            df_p = df_pivot[(df_pivot['포트폴리오'] == port) & (df_pivot['평가금액'] > 0)].copy()
+            
+            # Note: Negative Cash / Debt will NOT appear in TreeMap but WILL appear in Table below.
+            
+            if df_p.empty: 
+                # If only negative/zero assets exist, check if we should show message
+                # Don't show "No Data" if negative assets exist, just skip Treemap.
+                # Use unfiltered to check existence
+                df_p_all = df_pivot[df_pivot['포트폴리오'] == port]
+                if not df_p_all.empty:
+                    st.caption("※ 마이너스 자산(부채/현금부족)은 트리맵에 표시되지 않으나, 하단 표에서는 확인 가능합니다.")
                 continue
-            # --- Dynamic Font Size Logic ---
-            min_val = df_p['평가금액'].min()
+            
+            # Dynamic Font Size
+            min_val = df_p['평가금액'].min() # Resize based on KRW value (Size)
             max_val = df_p['평가금액'].max()
             def get_font_size(val):
                 if max_val == min_val: return 24
                 norm = (val - min_val) / (max_val - min_val)
                 return 14 + (norm * 66) 
             df_p['TargetFontSize'] = df_p['평가금액'].apply(get_font_size)
-            # --- Debug: Show Data ---
-            # st.dataframe(df_p) # Uncomment if needed
-            # --- Custom Coloring & Structure (go.Treemap) ---
-            # User Request: Dark Portfolio Background, Colored Tiles, No Borders, Big Text.
-            # Strategy: Pre-calculate Hex colors for all nodes.
-            # Helper to generate color from value (-30 to +30)
+
+            # Calculate Weight (비중)
+            total_port_val = df_p['평가금액'].sum()
+            df_p['비중'] = 0.0
+            if total_port_val > 0:
+                df_p['비중'] = (df_p['평가금액'] / total_port_val) * 100
+
+            # Colors from Return Rate
             def get_color_hex(val):
-                # Clamp to range
                 v = max(-30, min(30, val))
-                # Normalize to 0-1 for Red-Yellow-Green (0=Red, 0.5=Yellow, 1=Green)
-                # But typically RdYlGn: 0=Red, 1=Green.
-                # My range: -30(Red) -> 0(Gray/Black?) -> +30(Green).
-                # Plotly 'RdYlGn' is Red(Low) -> Green(High).
                 norm = (v + 30) / 60.0
                 return px.colors.sample_colorscale('RdYlGn', [norm])[0]
-            # 1. Prepare Data
-            df_p['종목'] = df_p['종목'].astype(str)
-            # Root Node
+            
+            # Root Node Construction
             root_id = port
-            root_label = "" # Hide visual label (User Request)
+            root_label = "" 
             root_parent = ""
-            root_value = df_p['평가금액'].sum()
+            root_value = df_p['평가금액'].sum() # KRW Value
             root_color = "#262626" 
-            # Root Custom Data (Sum/Mean where applicable for Portfolio Level)
-            # Order: [TotalProfit, ReturnRate, Invested, Qty, AvgPrice, CurPrice, Div, Realized, CurSymbol]
-            # Note: Prices/Qty not meaningful for Root Sum, but fill 0 for structure.
+            
+            # Root Custom Data
+            # [TotalProfit, ReturnRate, Invested, Qty, Avg, Cur, Div, Realized, Symbol, Weight]
+            # Use KRW for Root Totals
             root_custom = [
                 df_p['총평가손익'].sum(), 
-                0, # Root Return
+                0, 
                 df_p['매입금액'].sum(),
-                0, 0, 0, # Qty, Avg, Cur
+                0, 0, 0, 
                 df_p['배당수익'].sum(),
                 df_p['확정손익'].sum(),
-                '₩' # Root Currency Default
+                '₩',
+                100.0 # Root Weight
             ]
+            
             # Child Nodes
             child_ids = df_p['종목'].tolist()
             child_labels = df_p['종목'].tolist()
             child_parents = [root_id] * len(df_p)
-            child_values = df_p['평가금액'].tolist()
+            child_values = df_p['평가금액'].tolist() # Size by KRW
             child_colors = df_p['ReturnRate'].apply(get_color_hex).tolist()
-            # Columns to pass to tooltips
-            # Order MUST match root_custom
-            cols_to_hover = ['총평가손익', 'ReturnRate', '매입금액', '보유주수', '평단가', '현재가', '배당수익', '확정손익', 'CurSymbol']
+            
+            # Custom Data for Children (Use Native Values for Display!)
+            # Format: '총평가손익_Native', 'ReturnRate', '매입금액_Native', '보유주수', '평단가', '현재가_Native', ...
+            # Note: 평단가 implies Native Avg Cost if calculated from Native Invested / Qty. 
+            # But here '평단가' is from DB, likely Native for USD assets? 
+            # Yes, if Amount is USD, Price is USD, then Avg Cost is USD.
+            # So we use '평단가' (Original) which corresponds to Native.
+            cols_to_hover = [
+                '총평가손익_Native', 'ReturnRate', '매입금액_Native', '보유주수', 
+                '평단가', '현재가_Native', '배당수익', '확정손익', 'CurSymbol', '비중'
+            ]
             child_custom = df_p[cols_to_hover].values.tolist()
+            
             ids = [root_id] + child_ids
             labels = [root_label] + child_labels
             parents = [root_parent] + child_parents
@@ -793,9 +860,10 @@ elif page == "Asset Details":
             custom_data = [root_custom] + child_custom
             # Rich Hover Template (Modern/Sophisticated Design)
             # Uses HTML styling for "Card" look.
-            # 0:Profit, 1:Return, 2:Invest, 3:Qty, 4:Avg, 5:Cur, 6:Div, 7:Realized, 8:Symbol
+            # 0:Profit, 1:Return, 2:Invest, 3:Qty, 4:Avg, 5:Cur, 6:Div, 7:Realized, 8:Symbol, 9:Weight
             hover_template = (
-                "<span style='font-size:18px; font-weight:bold'>%{label}</span><br>" +
+                "<span style='font-size:18px; font-weight:bold'>%{label}</span> " +
+                "<span style='font-size:14px; color:#cccccc'>(%{customdata[9]:.1f}%)</span><br>" +
                 "<span style='font-size:12px; color:#aaaaaa'>%{customdata[3]:,.0f}주 보유</span><br><br>" +
                 "<span style='color:#aaaaaa'>평가금액:</span> <b style='font-size:16px'>₩%{value:,.0f}</b> " +
                 "<span style='font-size:14px'>(%{customdata[1]:.2f}%)</span><br>" +
@@ -838,6 +906,36 @@ elif page == "Asset Details":
             Evaluated Profit: 평가금액 - 매입금액 | Return Rate: (평가금액 / 매입금액 - 1) * 100 | Display Size: 평가금액 비례 (Max 180px)
             </div>
             """, unsafe_allow_html=True)
+            
+            # --- Asset Table (Details) ---
+            # Show ALL assets (including Negative Cash/Debt) which are hidden from TreeMap
+            st.markdown("###### 📋 상세 자산 목록")
+            df_table = df_pivot[df_pivot['포트폴리오'] == port].copy()
+            
+            # Sort by Evaluated Value Descending
+            df_table = df_table.sort_values('평가금액', ascending=False)
+            
+            # Select & Rename Columns for Display
+            # Use Native Price for clarity? Or KRW? 
+            # Let's show: Asset, Qty, Native Price (hint), Invested(KRW), Eval(KRW), P/L(KRW), Return(%)
+            
+            # Format numbers? Pandas Styler or st.column_config
+            st.dataframe(
+                df_table[['종목', '현재가_Native', '보유주수', '평가금액', '매입금액', '총평가손익', 'ReturnRate', 'CurSymbol']],
+                column_config={
+                    "종목": "Asset",
+                    "현재가_Native": st.column_config.NumberColumn("Price (Native)", format="%.2f"),
+                    "보유주수": st.column_config.NumberColumn("Qty", format="%.4f"),
+                    "평가금액": st.column_config.NumberColumn("Eval Value (₩)", format="%d"),
+                    "매입금액": st.column_config.NumberColumn("Invested (₩)", format="%d"),
+                    "총평가손익": st.column_config.NumberColumn("P/L (₩)", format="%d"),
+                    "ReturnRate": st.column_config.NumberColumn("Return", format="%.2f%%"),
+                    "CurSymbol": "Cur"
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+            st.divider()
 # --- Page 4: Transaction Input ---
 elif page == "Transaction Log":
     st.header("Transaction Log")
