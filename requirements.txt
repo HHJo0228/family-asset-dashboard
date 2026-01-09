@@ -1,0 +1,11 @@
+streamlit
+pandas
+plotly
+st-gsheets-connection
+google-auth
+numpy
+openpyxl
+yahooquery
+streamlit-authenticator
+google-generativeai
+sqlalchemy
